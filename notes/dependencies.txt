@@ -1,0 +1,5 @@
+ python3 -m venv ygg-venv
+
+ pip install -U discord.py
+
+ pip install aiosqlite

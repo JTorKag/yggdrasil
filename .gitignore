@@ -22,4 +22,5 @@ guild_id
 #db
 *.db
 
-notes/
+# remove notes for full release
+#notes/

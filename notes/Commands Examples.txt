@@ -1,0 +1,23 @@
+Create Server
+.\Dominions6.exe --tcpserver --ipadr localhost --port 8789 --era 1 --randmap 15 --newgame "hostedgameA"--noclientstart
+
+Start Game
+.\Dominions6.exe --tcpserver --ipadr localhost --port 8789 --era 1 --randmap 15 "hostedgameA" --noclientstart --uploadmaxp X
+OR
+.\Dominions6.exe --tcpserver --ipadr localhost --port 8789 --era 1 --randmap 15 "hostedgameA" --noclientstart --uploadtime X
+
+Start Server
+
+.\Dominions6.exe --tcpserver --ipadr localhost --port 8789 "hostedgameA"
+
+Host Turn
+
+.\Dominions6.exe "hostedgameA" --host
+
+Start Server
+
+.\Dominions6.exe --tcpserver --ipadr localhost --port 8789 "hostedgameA"
+
+Get Server Status
+
+.\Dominions6.exe -T --tcpquery --ipadr 45.79.83.4 --port 6006 > output.txt
