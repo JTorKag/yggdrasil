@@ -19,4 +19,7 @@ venv.bak/
 bot_token
 guild_id
 
+#db
+*.db
+
 notes/
