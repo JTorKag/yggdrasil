@@ -15,7 +15,7 @@ def getServerStatus():
             stderr=subprocess.DEVNULL)
     return dominions_to_json(statusResult.stdout)
 
-async def newGameLobby(game_id,db_instance):
+async def startGameLobby(game_id,db_instance):
     game_details = await db_instance.get_game_info(game_id = game_id)
 
     if game_details[4] == "Generated DA Map":

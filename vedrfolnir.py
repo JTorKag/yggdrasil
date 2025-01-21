@@ -34,11 +34,12 @@ class dbClient:
                 game_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 game_name TEXT NOT NULL,
                 game_port INTEGER,
-                game_era TEXT,
+                game_era INTEGER,
                 game_map TEXT,
-                game_started BOOLEAN,
-                game_timer_running BOOLEAN,
-                game_timer_default INTEGER,
+                game_mods TEXT,
+                game_running BOOLEAN,
+                channel_id TEXT,
+                game_active BOOLEAN NOT NULL,
                 game_owner TEXT
             )
             """)
@@ -51,25 +52,43 @@ class dbClient:
                 FOREIGN KEY (game_id) REFERENCES games (game_id)
             )
             """)
+            await cursor.execute("""
+            CREATE TABLE gameTimers (
+                game_id INTEGER PRIMARY KEY,
+                timer_default INTEGER NOT NULL,
+                timer_length INTEGER NOT NULL,
+                timer_running BOOL,
+                remaining_time INTEGER
+            )
+            """)
             await self.connection.commit()
 
-    async def create_game(self, game_name, game_port, game_era, game_map, started_status, timer_running, timer_default, game_owner):
+    async def create_game(self, game_name, game_port, game_era, game_map, game_mods, game_running, channel_id, game_active, game_owner):
         """Insert a new game into the games table."""
         query = '''
-        INSERT INTO games (game_name, game_port, game_era, game_map, game_started, game_timer_running, game_timer_default, game_owner)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+        INSERT INTO games (game_name, game_port, game_era, game_map, game_mods, game_running, channel_id, game_active, game_owner)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
         '''
         if game_port is None:
             game_port = await self.assign_free_port()
         if game_map == "DreamAtlas":
             game_map = "Generated DA Map"
         
-        
         async with self.connection.cursor() as cursor:
-            await cursor.execute(query, (game_name, game_port, game_era, game_map, started_status, timer_running, timer_default, game_owner))
+            await cursor.execute(query, (game_name, game_port, game_era, game_map, game_mods, game_running, channel_id, game_active, game_owner ))
             await self.connection.commit()
             return cursor.lastrowid
             
+    async def create_timer(self, game_id, timer_default, timer_length, timer_running, remaining_time):
+        query = '''
+        INSERT INTO gameTimers (game_id, timer_default, timer_length, timer_running, remaining_time)
+        VALUES (?, ?, ?, ?, ?);
+        '''
+
+        async with self.connection.cursor() as cursor:
+            await cursor.execute(query, (game_id, timer_default, timer_length, timer_running, remaining_time))
+            await self.connection.commit()
+            return cursor.lastrowid
         
 
     async def add_player(self, game_id, player_id, nation, turn_status):
@@ -81,6 +100,19 @@ class dbClient:
         async with self.connection.cursor() as cursor:
             await cursor.execute(query, (game_id, player_id, nation, turn_status))
             await self.connection.commit()
+
+    async def get_active_game_channels(self):
+        """Retrieve channel IDs for all active games."""
+        query = '''
+        SELECT channel_id FROM games WHERE game_active = 1;
+        '''
+        async with self.connection.cursor() as cursor:
+            await cursor.execute(query)
+            rows = await cursor.fetchall()
+            # Extract channel_id from rows
+            return [int(row[0]) for row in rows]
+
+
 
     async def get_game_info(self, game_id):
         """Fetch all info about a specific game."""

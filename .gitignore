@@ -15,9 +15,8 @@ venv.bak/
 #wsl
 *.Identifier
 
-# Keys
-bot_token
-guild_id
+# config & keys
+config.json
 
 #db
 *.db
