@@ -17,10 +17,11 @@ bot_token = config["bot_token"]
 guild_id = config["guild_id"]
 category_id = config["category_id"]
 bot_channels = list(map(int, config["bot_channels"]))
+dominions_folder= config["dominions_folder"] #maybe put this in nidhogg?
 
 
 intents = discord.Intents.default()
-intents.message_content = True  #privliaged
+intents.message_content = True
 intents.guilds = True
 
 shutdown_signal = asyncio.Event()

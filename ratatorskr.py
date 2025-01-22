@@ -7,6 +7,7 @@ import nidhogg
 from functools import wraps
 from typing import Callable, Awaitable
 
+
 def require_active_channel(bot):
     """Decorator to restrict commands to active game channels or bot channels."""
     async def predicate(interaction: discord.Interaction) -> bool:
@@ -14,10 +15,10 @@ def require_active_channel(bot):
         active_game_channels = await bot.db_instance.get_active_game_channels()
         allowed_channels = set(active_game_channels + bot.bot_channels)
 
-        print(f"Active game channels: {active_game_channels}")
-        print(f"Bot channels: {bot.bot_channels}")
-        print(f"Interaction channel ID: {interaction.channel_id}")
-        print(f"Allowed channels: {allowed_channels}")
+        # print(f"Active game channels: {active_game_channels}")
+        # print(f"Bot channels: {bot.bot_channels}")
+        # print(f"Interaction channel ID: {interaction.channel_id}")
+        # print(f"Allowed channels: {allowed_channels}")
 
         # Check if the current channel is allowed
         if interaction.channel_id in allowed_channels:
@@ -35,6 +36,42 @@ def require_active_channel(bot):
         return wrapped
 
     return wrapper
+
+
+def serverStatusJsonToDiscordFormatted(status_json):
+    """Converts JSONifed discord information into formatted discord response"""
+    # Start building the message
+    message_parts = []
+    
+    # Add game info
+    game_info = f"**Game Name:** {status_json.get('game_name')}\n"
+    game_info += f"**Status:** {status_json.get('status')}\n"
+    game_info += f"**Turn:** {status_json.get('turn')}\n"
+    #This is dominions time, not ygg time
+    #game_info += f"**Time Left:** {status_json.get('time_left')}\n"
+    message_parts.append(game_info)
+    
+    # Add players info
+    players_info = "**Players:**\n"
+    for player in status_json.get('players', []):
+        players_info += (f"Player {player['player_id']}: {player['nation']} ({player['nation_desc']}) - "
+                         f"{player['status']}\n")
+        
+        # Check if message exceeds 1024 characters
+        if len(players_info) > 1024:
+            message_parts.append(players_info)
+            players_info = ""  # Reset for next part if exceeds limit
+
+    # Add any remaining players info
+    if players_info:
+        message_parts.append(players_info)
+
+    # Join all parts into a single message
+    formatted_message = "\n".join(message_parts)
+
+    # Trim the message to 1024 characters if necessary
+    return formatted_message[:1024]
+
 
 
 class discordClient(discord.Client):
@@ -97,6 +134,7 @@ class discordClient(discord.Client):
                         game_mods="[]",
                         channel_id=new_channel_id,
                         game_active=True,
+                        process_pid = None,
                         game_owner=interaction.user.name
                     )
 
@@ -127,8 +165,17 @@ class discordClient(discord.Client):
         )
         @require_active_channel(self)
         async def launch_game_lobby(interaction: discord.Interaction):
-            id = interaction.channel
-            await interaction.response.send_message(f"Test method for startting game in channel {id}")
+            # id = interaction.channel
+            # await interaction.response.send_message(f"Test method for startting game in channel {id}")
+            print("\nTrying to launch game")
+            game_id = await self.db_instance.get_game_id_by_channel(interaction.channel_id)
+            print(f"Launching game {game_id}")
+            if game_id is None:
+                await interaction.response.send_message("No game lobby is associated with this channel.")
+                return
+            await nidhogg.launchGameLobby(game_id, self.db_instance)
+            #await self.db_instance.update_process_pid(game_id, pid)
+            await interaction.response.send_message(f"Game lobby launched.")
 
 
         @self.tree.command(
@@ -138,7 +185,7 @@ class discordClient(discord.Client):
         )
         @require_active_channel(self)
         async def wake_command(interaction: discord.Interaction):
-            response = nidhogg.serverStatusJsonToDiscordFormatted(nidhogg.getServerStatus())
+            response = serverStatusJsonToDiscordFormatted(nidhogg.getServerStatus())
             embedResponse = discord.Embed(title="Server Status", type="rich")
             embedResponse.add_field(name="", value=response, inline=True)
             await interaction.response.send_message(embed=embedResponse)
@@ -188,4 +235,4 @@ class discordClient(discord.Client):
             return 
         print(f'Message from {message.author}: {message.content} in {message.channel}')
     
-    
+

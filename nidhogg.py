@@ -4,8 +4,35 @@ from pathlib import Path
 import subprocess
 import json
 import re
+import os
+import stat
+import threading
 
-dom_folder_path = Path.home() / "dominions6"
+with open("config.json", 'r') as file:
+    config = json.load(file)
+dom_folder_path= Path(config["dominions_folder"])
+dom_data_folder_path = Path(config["dom_data_folder"])
+
+
+def set_executable_permission(file_path: str):
+    """
+    Set executable permission for the specified file.
+
+    Args:
+        file_path (str): The path to the file.
+    """
+    try:
+        # Get the current file permissions
+        st = os.stat(file_path)
+        
+        # Set the executable bit for the owner, group, and others
+        os.chmod(file_path, st.st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        
+        print(f"Executable permission set for: {file_path}")
+    except Exception as e:
+        print(f"Error setting executable permission for {file_path}: {e}")
+
+set_executable_permission(dom_folder_path/"dom6_amd64")
 
 def getServerStatus():
     statusResult = subprocess.run(
@@ -15,23 +42,60 @@ def getServerStatus():
             stderr=subprocess.DEVNULL)
     return dominions_to_json(statusResult.stdout)
 
-async def startGameLobby(game_id,db_instance):
-    game_details = await db_instance.get_game_info(game_id = game_id)
+async def launchGameLobby(game_id,db_instance):
+    game_details = await db_instance.get_game_info(game_id=game_id)
+    
+    # Base command for launching the game
+    command = [
+        str(dom_folder_path / "dom6_amd64"),
+        "--tcpserver",
+        "--ipadr", "localhost",
+        "--port", str(game_details[2]),
+        "--era", str(game_details[3]),
+        "--newgame", str(game_details[1]),
+        "--noclientstart"
+    ]
 
+    # Add specific parameters based on map type
     if game_details[4] == "Generated DA Map":
-        subprocess.Popen(
-            [str(dom_folder_path / "dom6_amd64"), "--tcpserver", "--ipadr", "localhost", "--port", str(game_details[2]), "--era", str(game_details[3]), "--mapfile", "smackdown_ea1", "--newgame", str(game_details[1]), "--noclientstart" ]
-        )
-        return
+        command.extend(["--mapfile", "smackdown_ea1"])
     elif game_details[4] == "Vanilla":
-        subprocess.Popen(
-            [str(dom_folder_path / "dom6_amd64"), "--tcpserver", "--ipadr", "localhost", "--port", str(game_details[2]), "--era", str(game_details[3]), "--randmap", "15", "--newgame", str(game_details[1]), "--noclientstart" ]
-        )
-        return
+        command.extend(["--randmap", "15"])
     else:
-        print("Uploaded Maps not implemnted yet")
-        return
+        print("Uploaded Maps not implemented yet")
+        return None
 
+    # Launch the process in a detached thread
+    def launch_process():
+        try:
+            process = subprocess.Popen(
+                command,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL
+            )
+            print(f"Process launched with PID: {process.pid}")
+            return process.pid
+        except Exception as e:
+            print(f"Failed to launch process: {e}")
+            return None
+
+    # Run the process launch in a thread and return the PID
+    pid_container = []
+
+    def thread_target():
+        pid = launch_process()
+        if pid is not None:
+            pid_container.append(pid)
+
+    thread = threading.Thread(target=thread_target, daemon=True)
+    thread.start()
+    thread.join()  # Wait for the thread to complete to ensure the PID is available
+    await db_instance.update_process_pid(game_id,int(pid_container[0]))
+    await db_instance.update_game_running(game_id, 1)
+    #await db_instance.
+    #return int(pid_container[0]) if pid_container else None
+    return
 
 ### Helpers
 
@@ -64,35 +128,4 @@ def dominions_to_json(log_string):
     
     return dom_status_json
 
-def serverStatusJsonToDiscordFormatted(status_json):
-    # Start building the message
-    message_parts = []
-    
-    # Add game info
-    game_info = f"**Game Name:** {status_json.get('game_name')}\n"
-    game_info += f"**Status:** {status_json.get('status')}\n"
-    game_info += f"**Turn:** {status_json.get('turn')}\n"
-    #This is dominions time, not ygg time
-    #game_info += f"**Time Left:** {status_json.get('time_left')}\n"
-    message_parts.append(game_info)
-    
-    # Add players info
-    players_info = "**Players:**\n"
-    for player in status_json.get('players', []):
-        players_info += (f"Player {player['player_id']}: {player['nation']} ({player['nation_desc']}) - "
-                         f"{player['status']}\n")
-        
-        # Check if message exceeds 1024 characters
-        if len(players_info) > 1024:
-            message_parts.append(players_info)
-            players_info = ""  # Reset for next part if exceeds limit
 
-    # Add any remaining players info
-    if players_info:
-        message_parts.append(players_info)
-
-    # Join all parts into a single message
-    formatted_message = "\n".join(message_parts)
-
-    # Trim the message to 1024 characters if necessary
-    return formatted_message[:1024]
