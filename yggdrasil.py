@@ -4,31 +4,39 @@ import asyncio
 import discord
 from ratatorskr import discordClient
 import nidhogg
+from bifrost import bifrost
 from vedrfolnir import dbClient
 import signal
 import sys
 import json
 
 
-with open("config.json", 'r') as file:
-    config = json.load(file)
+# with open("config.json", 'r') as file:
+#     config = json.load(file)
 
-bot_token = config["bot_token"]
-guild_id = config["guild_id"]
-category_id = config["category_id"]
-bot_channels = list(map(int, config["bot_channels"]))
-dominions_folder= config["dominions_folder"] #maybe put this in nidhogg?
+# bot_token = config["bot_token"]
+# guild_id = config["guild_id"]
+# category_id = config["category_id"]
+# bot_channels = list(map(int, config["bot_channels"]))
+# dom folder and dom backups loaded in nidhogg
+
+config = bifrost.load_config()
 
 
 intents = discord.Intents.default()
 intents.message_content = True
 intents.guilds = True
+intents.emojis_and_stickers = True
+
 
 shutdown_signal = asyncio.Event()
 bot_ready_signal =asyncio.Event()
 
 db_instance = dbClient()  # Get the shared instance of dbClient
-discordBot = discordClient(intents=intents, guild_id=guild_id,db_instance=db_instance, bot_ready_signal=bot_ready_signal, category_id=category_id,bot_channels=bot_channels)
+discordBot = discordClient(intents=intents,
+                           db_instance=db_instance,
+                           bot_ready_signal=bot_ready_signal,
+                           config=config)
 
 
 @discordBot.event
@@ -37,7 +45,7 @@ async def on_disconnect():
 
 async def run_discord_bot():
     try:
-        await discordBot.start(bot_token)
+        await discordBot.start(config.get("bot_token"))
     except asyncio.CancelledError:
         pass
     finally:

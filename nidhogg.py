@@ -7,11 +7,17 @@ import re
 import os
 import stat
 import threading
+from bifrost import bifrost
 
-with open("config.json", 'r') as file:
-    config = json.load(file)
-dom_folder_path= Path(config["dominions_folder"])
-dom_data_folder_path = Path(config["dom_data_folder"])
+# with open("config.json", 'r') as file:
+#     config = json.load(file)
+# dom_folder_path= Path(config["dominions_folder"])
+# dom_data_folder_path = Path(config["dom_data_folder"])
+
+config = bifrost.load_config()
+
+dominions_folder = Path(config.get("dominions_folder"))
+
 
 
 def set_executable_permission(file_path: str):
@@ -32,11 +38,11 @@ def set_executable_permission(file_path: str):
     except Exception as e:
         print(f"Error setting executable permission for {file_path}: {e}")
 
-set_executable_permission(dom_folder_path/"dom6_amd64")
+set_executable_permission(dominions_folder/ "dom6_amd64")
 
 def getServerStatus():
     statusResult = subprocess.run(
-    [str(dom_folder_path / "dom6_amd64" ),"-T", "--tcpquery", "--ipadr" , "45.79.83.4", "--port", "6006"],
+    [str(dominions_folder/"dom6_amd64"),"-T", "--tcpquery", "--ipadr" , "45.79.83.4", "--port", "6006"],
             stdout=subprocess.PIPE,
             text=True,
             stderr=subprocess.DEVNULL)
@@ -47,7 +53,7 @@ async def launchGameLobby(game_id,db_instance):
     
     # Base command for launching the game
     command = [
-        str(dom_folder_path / "dom6_amd64"),
+        str(dominions_folder/"dom6_amd64"),
         "--tcpserver",
         "--ipadr", "localhost",
         "--port", str(game_details[2]),
@@ -80,7 +86,6 @@ async def launchGameLobby(game_id,db_instance):
             print(f"Failed to launch process: {e}")
             return None
 
-    # Run the process launch in a thread and return the PID
     pid_container = []
 
     def thread_target():
@@ -90,11 +95,9 @@ async def launchGameLobby(game_id,db_instance):
 
     thread = threading.Thread(target=thread_target, daemon=True)
     thread.start()
-    thread.join()  # Wait for the thread to complete to ensure the PID is available
+    thread.join()
     await db_instance.update_process_pid(game_id,int(pid_container[0]))
     await db_instance.update_game_running(game_id, 1)
-    #await db_instance.
-    #return int(pid_container[0]) if pid_container else None
     return
 
 ### Helpers

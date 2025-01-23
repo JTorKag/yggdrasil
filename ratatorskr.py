@@ -5,7 +5,9 @@ import discord
 from discord import app_commands, Embed
 import nidhogg
 from functools import wraps
-from typing import Callable, Awaitable
+from typing import Callable, Awaitable, List, Dict, Optional, Union
+import asyncio
+from bifrost import bifrost
 
 
 def require_active_channel(bot):
@@ -15,13 +17,8 @@ def require_active_channel(bot):
         active_game_channels = await bot.db_instance.get_active_game_channels()
         allowed_channels = set(active_game_channels + bot.bot_channels)
 
-        # print(f"Active game channels: {active_game_channels}")
-        # print(f"Bot channels: {bot.bot_channels}")
-        # print(f"Interaction channel ID: {interaction.channel_id}")
-        # print(f"Allowed channels: {allowed_channels}")
-
-        # Check if the current channel is allowed
-        if interaction.channel_id in allowed_channels:
+        # If allowed_channels is empty, allow any channel
+        if not allowed_channels or interaction.channel_id in allowed_channels:
             return True
 
         # Deny access if the channel is not allowed
@@ -75,15 +72,15 @@ def serverStatusJsonToDiscordFormatted(status_json):
 
 
 class discordClient(discord.Client):
-    def __init__(self, *, intents, guild_id, db_instance, bot_ready_signal,category_id,bot_channels):
+    def __init__(self, *, intents, db_instance, bot_ready_signal,config:dict):
         super().__init__(intents=intents)
         self.tree = app_commands.CommandTree(self)
-        self.guild_id = guild_id
+        self.guild_id = config["guild_id"]
         self.db_instance = db_instance
         self.bot_ready_signal = bot_ready_signal
-        self.category_id = category_id
-        self.bot_channels = bot_channels
-
+        self.category_id = config["category_id"]
+        self.bot_channels = list(map(int, config.get("bot_channels", [])))
+        self.config = config
 
     async def setup_hook(self):
         
@@ -213,6 +210,162 @@ class discordClient(discord.Client):
             await file.save(file_path)
             await interaction.response.send_message("Done uploading {file.filename}")
             print(f"{interaction.user} uploaded a map.")
+
+        async def create_dropdown(
+            interaction: discord.Interaction, 
+            options: List[Dict[str, str]], 
+            prompt_type: str = "option", 
+            multi_select: bool = True
+        ) -> List[str]:
+            """Creates a dropdown menu and returns the names and locations of selected options.
+
+            Args:
+                interaction (discord.Interaction): The Discord interaction.
+                options (List[Dict[str, str]]): A list of dropdown options.
+                prompt_type (str, optional): The type of prompt to display. Defaults to "option".
+                multi_select (bool, optional): Whether multiple selections are allowed. Defaults to True.
+            """
+
+            def resolve_emoji(emoji_code: str) -> Optional[discord.PartialEmoji]:
+                """Resolves a custom emoji from its code."""
+                if emoji_code and emoji_code.startswith(":") and emoji_code.endswith(":"):
+                    emoji_name = emoji_code.strip(":")
+                    for emoji in interaction.guild.emojis:
+                        if emoji.name.lower() == emoji_name.lower():
+                            return emoji
+                    return None
+                return emoji_code
+
+            if not options:
+                await interaction.response.send_message("No options available.", ephemeral=True)
+                return [], []
+
+            class Dropdown(discord.ui.Select):
+                def __init__(self, prompt_type: str):
+                    super().__init__(
+                        placeholder=f"Choose {'one or more' if multi_select else 'one'} {prompt_type}{'s' if multi_select else ''}...",
+                        min_values=1 if multi_select else 1,  # Minimum is always 1
+                        max_values=len(options) if multi_select else 1,  # Max depends on multi_select
+                        options=[
+                            discord.SelectOption(
+                                label=option["name"],
+                                value=option["location"],
+                                description=option.get("yggdescr", None),
+                                emoji=resolve_emoji(option.get("yggemoji")),
+                            )
+                            for option in options
+                        ],
+                    )
+
+                async def callback(self, interaction: discord.Interaction):
+                    # Mark the interaction response as deferred if not already done
+                    if not interaction.response.is_done():
+                        await interaction.response.defer()
+                    # Process selected values
+                    self.view.selected_names = [o.label for o in self.options if o.value in self.values]
+                    self.view.selected_locations = self.values  # Selected full paths
+                    self.view.stop()
+
+            class DropdownView(discord.ui.View):
+                def __init__(self, prompt_type: str):
+                    super().__init__()
+                    self.add_item(Dropdown(prompt_type))
+                    self.selected_names = []
+                    self.selected_locations = []
+                    self.is_stopped = asyncio.Event()
+
+                def stop(self):
+                    super().stop()
+                    self.is_stopped.set()
+
+                async def wait(self, timeout=None):
+                    try:
+                        await asyncio.wait_for(self.is_stopped.wait(), timeout=timeout)
+                    except asyncio.TimeoutError:
+                        self.stop()
+                        raise
+
+            # Create the dropdown view
+            view = DropdownView(prompt_type)
+
+            # Defer the initial interaction response
+            if not interaction.response.is_done():
+                await interaction.response.defer(ephemeral=True)
+
+            try:
+                # Send the follow-up message with the dropdown view
+                await interaction.followup.send(f"Select {prompt_type}{'s' if multi_select else ''} from the dropdown:", view=view, ephemeral=True)
+                # Wait for user interaction or timeout
+                await view.wait(timeout=180)
+            except asyncio.TimeoutError:
+                # Handle timeout gracefully
+                await interaction.followup.send("You did not make a selection in time.", ephemeral=True)
+                return [], []
+
+            return view.selected_names, view.selected_locations
+
+
+
+        @self.tree.command(
+            name="select_mods",
+            description="Select mods for game.",
+            guild=discord.Object(id=self.guild_id),
+        )
+        @require_active_channel(self)
+        async def select_mods_dropdown(interaction: discord.Interaction):
+            mods = bifrost.get_mods(config=self.config)
+
+            # Pass "mod" as the prompt type
+            selected_mods, mods_locations = await create_dropdown(interaction, mods, "mod", multi_select=True)
+
+            if selected_mods:
+                await interaction.followup.send(f"You selected: {', '.join(selected_mods)}", ephemeral=True)
+            else:
+                await interaction.followup.send("No selection was made.", ephemeral=True)
+
+        @self.tree.command(
+            name="select_map",
+            description="Select map for game.",
+            guild=discord.Object(id=self.guild_id),
+        )
+        @require_active_channel(self)
+        async def select_map_dropdown(interaction: discord.Interaction):
+            maps = bifrost.get_maps(config=self.config)
+
+            # Pass "mod" as the prompt type
+            selected_map, map_location = await create_dropdown(interaction, maps, "map", multi_select=False)
+
+            if selected_map:
+                await interaction.followup.send(f"You selected: {', '.join(selected_map)}", ephemeral=True)
+            else:
+                await interaction.followup.send("No selection was made.", ephemeral=True)
+
+
+        @self.tree.command(
+            name="dropdown_test",
+            description="Test the generic dropdown menu.",
+            guild=discord.Object(id=self.guild_id)
+        )
+        @require_active_channel(self)
+        async def dropdown_test_command(interaction: discord.Interaction):
+            options = [
+                {"name": "Option 1", "location": "Location 1", "yggemoji": "1️⃣", "yggdescr": "This is the first option."},
+                {"name": "Option 2", "location": "Location 2", "yggemoji": ":DreamAtlas:", "yggdescr": "This is a custom emoji option."},
+            ]
+
+            selected_names, selected_locations = await create_dropdown(interaction, options, "mod")
+
+            if selected_names:
+                await interaction.followup.send(f"You selected: {', '.join(selected_names)}", ephemeral=True)
+            else:
+                await interaction.followup.send("No selection was made.", ephemeral=True)
+
+
+
+
+
+
+
 
 
     async def on_ready(self):
