@@ -3,6 +3,7 @@
  pip install -U discord.py
 
  pip install aiosqlite
+ pip install watchdog
 
 sudo apt install lsb-release
 sudo apt install screen

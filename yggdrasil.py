@@ -3,25 +3,19 @@
 import asyncio
 import discord
 from ratatorskr import discordClient
-import nidhogg
+from nidhogg import nidhogg
 from bifrost import bifrost
 from vedrfolnir import dbClient
 import signal
 import sys
 import json
-
-
-# with open("config.json", 'r') as file:
-#     config = json.load(file)
-
-# bot_token = config["bot_token"]
-# guild_id = config["guild_id"]
-# category_id = config["category_id"]
-# bot_channels = list(map(int, config["bot_channels"]))
-# dom folder and dom backups loaded in nidhogg
+from pathlib import Path
 
 config = bifrost.load_config()
 
+nidhogg.set_executable_permission(Path(config.get("dominions_folder"))/ "dom6_amd64")
+
+observer = bifrost.initialize_dom_data_folder(config)
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -36,7 +30,8 @@ db_instance = dbClient()  # Get the shared instance of dbClient
 discordBot = discordClient(intents=intents,
                            db_instance=db_instance,
                            bot_ready_signal=bot_ready_signal,
-                           config=config)
+                           config=config,
+                           nidhogg=nidhogg)
 
 
 @discordBot.event
@@ -81,6 +76,10 @@ async def shutdown():
     if discordBot.is_ready():
         await discordBot.close()
         print("Bot stopped.")
+    if observer:
+        observer.stop()
+        print("Stopped monitoring dom_data_folder.")
+        observer.join()
     shutdown_signal.set()
     print("Goodbye.")
 

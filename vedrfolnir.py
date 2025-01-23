@@ -139,6 +139,51 @@ class dbClient:
             await self.connection.commit()
             print(f"Updated game_running to {status}")
 
+    async def get_map(self, game_id):
+        """Retrieve the map associated with a specific game."""
+        query = '''
+        SELECT game_map FROM games WHERE game_id = ?;
+        '''
+        async with self.connection.cursor() as cursor:
+            await cursor.execute(query, (game_id,))
+            result = await cursor.fetchone()
+            return result[0] if result else None
+
+    async def get_mods(self, game_id):
+        """Retrieve the mods associated with a specific game."""
+        query = '''
+        SELECT game_mods FROM games WHERE game_id = ?;
+        '''
+        async with self.connection.cursor() as cursor:
+            await cursor.execute(query, (game_id,))
+            result = await cursor.fetchone()
+            return result[0].split(',') if result and result[0] else []
+
+    async def update_map(self, game_id, new_map):
+        """Update the map associated with a specific game."""
+        query = '''
+        UPDATE games
+        SET game_map = ?
+        WHERE game_id = ?;
+        '''
+        async with self.connection.cursor() as cursor:
+            await cursor.execute(query, (new_map, game_id))
+            await self.connection.commit()
+            print(f"Updated game_map to {new_map} for game_id {game_id}")
+
+    async def update_mods(self, game_id, new_mods):
+        """Update the mods associated with a specific game."""
+        query = '''
+        UPDATE games
+        SET game_mods = ?
+        WHERE game_id = ?;
+        '''
+        async with self.connection.cursor() as cursor:
+            # Store mods as a comma-separated string
+            mods_str = ','.join(new_mods)
+            await cursor.execute(query, (mods_str, game_id))
+            await self.connection.commit()
+            print(f"Updated game_mods to {new_mods} for game_id {game_id}")
 
     async def get_game_info(self, game_id):
         """Fetch all info about a specific game."""
