@@ -90,48 +90,101 @@ class discordClient(discord.Client):
             guild=discord.Object(id=self.guild_id)
         )
         @require_active_channel(self)
-        async def new_game_command(interaction: discord.Interaction, supplied_name: str, supplied_era: int, supplied_map: str):
+        async def new_game_command(
+            interaction: discord.Interaction, 
+            game_name: str, 
+            game_era: str, 
+            research_random: str, 
+            global_slots: int, 
+            event_rarity: str, 
+            master_pass: str, 
+            disicples: str, 
+            story_events: str, 
+            no_going_ai: str, 
+            lv1_thrones: int, 
+            lv2_thrones: int, 
+            lv3_thrones: int, 
+            points_to_win: int
+        ):
             try:
-                # Validate era
-                if supplied_era < 1 or supplied_era > 3:
-                    await interaction.response.send_message("Era must be value 1, 2, or 3.")
+                async def validate_choice(interaction, input_value, valid_map, field_name):
+                    if input_value not in valid_map:
+                        valid_options = ", ".join(valid_map.keys())
+                        await interaction.response.send_message(
+                            f"Invalid choice for {field_name}. Please choose from: {valid_options}.",
+                            ephemeral=True
+                        )
+                        return None
+                    return valid_map[input_value]
+
+                # Defer interaction to prevent timeout
+                await interaction.response.defer(ephemeral=True)
+
+                # Validate inputs
+                era_map = {"Early": 1, "Middle": 2, "Late": 3}
+                game_era_value = await validate_choice(interaction, game_era, era_map, "game_era")
+
+                research_random_map = {"Even Spread": 1, "Random": 0}
+                research_random_value = await validate_choice(interaction, research_random, research_random_map, "research_random")
+
+                event_rarity_map = {"Common": 1, "Rare": 2}
+                event_rarity_value = await validate_choice(interaction, event_rarity, event_rarity_map, "event_rarity")
+
+                disicples_map = {"False": 1, "True": 0}
+                disicples_value = await validate_choice(interaction, disicples, disicples_map, "disicples")
+
+                story_events_map = {"None": 0, "Some": 1, "Full": 2}
+                story_events_value = await validate_choice(interaction, story_events, story_events_map, "story_events")
+
+                no_going_ai_map = {"True": 0, "False": 1}
+                no_going_ai_value = await validate_choice(interaction, no_going_ai, no_going_ai_map, "no_going_ai")
+
+                thrones_value = ",".join(map(str, [lv1_thrones, lv2_thrones, lv3_thrones]))
+
+                if not isinstance(points_to_win, int):
+                    await interaction.followup.send("points_to_win must be an integer.")
+                    return
+                elif points_to_win < 1:
+                    await interaction.followup.send("points_to_win must be at least 1.")
+                    return
+                elif points_to_win > lv1_thrones + lv2_thrones * 2 + lv3_thrones * 3:
+                    await interaction.followup.send("points_to_win must be no more than total points available.")
                     return
 
-                # Validate map
-                if supplied_map not in ["DreamAtlas", "Vanilla"]:
-                    await interaction.response.send_message(f"Pick something I'm using so far. DreamAtlas or Vanilla ENTRY: {supplied_map}")
-                    return
-
-                # Fetch guild
+                # Fetch guild and category
                 guild = interaction.client.get_guild(self.guild_id)
                 if not guild:
                     guild = await interaction.client.fetch_guild(self.guild_id)
 
-                # Fetch category
                 category = await guild.fetch_channel(self.category_id)
                 if not category or not isinstance(category, discord.CategoryChannel):
-                    await interaction.response.send_message("Game lobby category not found or invalid.")
+                    await interaction.followup.send("Game lobby category not found or invalid.")
                     return
 
                 # Create channel
-                new_channel = await guild.create_text_channel(name=supplied_name, category=category)
-                await interaction.response.send_message(f"Channel '{new_channel.name}' created successfully!")
-
-                # Save channel ID
+                new_channel = await guild.create_text_channel(name=game_name, category=category)
                 new_channel_id = new_channel.id
 
                 # Database operations
                 try:
                     new_game_id = await self.db_instance.create_game(
-                        game_name=supplied_name,
-                        game_port=None,
-                        game_era=supplied_era,
-                        game_map=supplied_map,
+                        game_name=game_name,
+                        game_era=game_era_value,
+                        research_random=research_random_value,
+                        global_slots=global_slots,
+                        eventrarity=event_rarity_value,
+                        masterpass=master_pass,
+                        teamgame=disicples_value,
+                        story_events=story_events_value,
+                        no_going_ai=no_going_ai_value,
+                        thrones=thrones_value,
+                        requiredap=points_to_win,
+                        game_map=None,
                         game_running=False,
                         game_mods="[]",
                         channel_id=new_channel_id,
                         game_active=True,
-                        process_pid = None,
+                        process_pid=None,
                         game_owner=interaction.user.name
                     )
 
@@ -143,18 +196,94 @@ class discordClient(discord.Client):
                         remaining_time=None
                     )
 
-                    await interaction.followup.send(f"Game '{supplied_name}' created successfully!")
+                    # Success response only sent here
+                    await interaction.followup.send(f"Game '{game_name}' created successfully with channel '{new_channel.name}'!")
+
                 except Exception as e:
-                    await interaction.followup.send(f"An error occurred while creating the game in the database: {e}")
+                    # Rollback if database insertion fails
+                    await new_channel.delete()
+                    await interaction.followup.send(
+                        f"An error occurred while creating the game in the database: {e}",
+                        ephemeral=True
+                    )
 
             except discord.Forbidden as e:
-                await interaction.response.send_message(f"Permission error: {e}")
+                await interaction.response.send_message(f"Permission error: {e}", ephemeral=True)
             except discord.HTTPException as e:
-                await interaction.response.send_message(f"Failed to create channel: {e}")
+                await interaction.response.send_message(f"Failed to create channel: {e}", ephemeral=True)
             except Exception as e:
-                await interaction.response.send_message(f"Unexpected error: {e}")
+                await interaction.response.send_message(f"Unexpected error: {e}", ephemeral=True)
 
-        
+
+
+
+
+        @new_game_command.autocomplete("game_era")
+        async def game_era_autocomplete(interaction: discord.Interaction, current: str):
+            # Provide predefined options
+            options = ["Early", "Middle", "Late"]
+            matches = options if not current else [option for option in options if current.lower() in option.lower()]
+
+            # Convert to app_commands.Choice objects
+            suggestions = [app_commands.Choice(name=option, value=option) for option in matches]
+
+            try:
+                # Send the autocomplete suggestions
+                await interaction.response.autocomplete(suggestions[:25])
+            except Exception as e:
+                print(f"Error sending autocomplete response: {e}")
+
+        @new_game_command.autocomplete("research_random")
+        async def research_random_autocomplete(interaction: discord.Interaction, current: str):
+            # Provide predefined options
+            options = ["Even Spread", "Random"]
+            matches = options if not current else [option for option in options if current.lower() in option.lower()]
+
+            # Convert to app_commands.Choice objects
+            suggestions = [app_commands.Choice(name=option, value=option) for option in matches]
+
+            try:
+                # Send the autocomplete suggestions
+                await interaction.response.autocomplete(suggestions[:25])
+            except Exception as e:
+                print(f"Error sending autocomplete response: {e}")
+
+        @new_game_command.autocomplete("global_slots")
+        async def global_slots_autocomplete(interaction: discord.Interaction, current: str):
+            # Provide predefined options
+            options = [5, 3, 4, 6, 7, 8, 9]
+            if current.isdigit():
+                current_int = int(current)
+                matches = [option for option in options if option == current_int]
+            else:
+                matches = options
+
+            # Convert to app_commands.Choice objects
+            suggestions = [app_commands.Choice(name=option, value=option) for option in matches]
+
+            try:
+                # Send the autocomplete suggestions
+                await interaction.response.autocomplete(suggestions[:25])
+            except Exception as e:
+                print(f"Error sending autocomplete response: {e}")
+
+        @new_game_command.autocomplete("event_rarity")
+        async def event_rarity_autocomplete(interaction: discord.Interaction, current: str):
+            # Provide predefined options
+            options = ["Common", "Rare"]
+            matches = options if not current else [option for option in options if current.lower() in option.lower()]
+
+            # Convert to app_commands.Choice objects
+            suggestions = [app_commands.Choice(name=option, value=option) for option in matches]
+
+            try:
+                # Send the autocomplete suggestions
+                await interaction.response.autocomplete(suggestions[:25])
+            except Exception as e:
+                print(f"Error sending autocomplete response: {e}")
+
+
+
         @self.tree.command(
                 name="launch",
                 description="Launches game lobby.",
@@ -402,6 +531,15 @@ class discordClient(discord.Client):
             # Fetch available maps
             maps = bifrost.get_maps(config=self.config)
 
+            # Add default options
+            default_maps = [
+                {"name": "Vanilla Small 10", "location": "vanilla_10", "yggemoji":":dom6:", "yggdescr":"Small Lakes & One Cave"},
+                {"name": "Vanilla Medium 15", "location": "vanilla_15", "yggemoji":":dom6:", "yggdescr":"Small Lakes & One Cave"},
+                {"name": "Vanilla Large 20", "location": "vanilla_20", "yggemoji":":dom6:", "yggdescr":"Small Lakes & One Cave"},
+                {"name": "Vanilla Enormous 25", "location": "vanilla_25", "yggemoji":":dom6:", "yggdescr":"Small Lakes & One Cave"}
+            ]
+            maps = default_maps + maps  # Prepend default maps; use `maps + default_maps` to append instead
+
             # Preselect the current map
             selected_map, map_location = await create_dropdown(
                 interaction, maps, "map", multi_select=False, preselected_values=[current_map] if current_map else []
@@ -424,7 +562,7 @@ class discordClient(discord.Client):
         @require_active_channel(self)
         async def dropdown_test_command(interaction: discord.Interaction):
 
-            options = [{'name': 'smackdown_ea1', 'location': 'smackdown_ea1/smackdown_ea1.map','yggemoji': ':DreamAtlas:', 'yggdescr': '"for winners only'},
+            options = [{'name': 'smackdown_ea1', 'location': 'smackdown_ea1/smackdown_ea1.map','yggemoji': 'DreamAtlas:', 'yggdescr': '"for winners only'},
                        {'name': 'teamstarttest', 'location': 'teamstarttest/teamstarttest.map', 'yggemoji': '::', 'yggdescr': ''},
                        {'name': 'Softball', 'location': 'Softball/Softball.map', 'yggemoji': '::', 'yggdescr': ''}]
 

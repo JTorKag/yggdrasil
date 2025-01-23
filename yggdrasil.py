@@ -47,41 +47,56 @@ async def run_discord_bot():
         await discordBot.close()
 
 async def handle_terminal_input():
+    global db_instance  # Ensure we're referencing the global db_instance
     await bot_ready_signal.wait()
     while not shutdown_signal.is_set():
         try:
-            user_input = await asyncio.to_thread(input, "Enter a command:")
+            user_input = await asyncio.to_thread(input, "\nEnter a command: ")
             if user_input.lower() == 'help':
-                print("exit: Shutsdown ygg server\n"+
-                      "close_db: Close the db file\n"+
-                      "open_db: Opens closed db file.")
+                print(
+                    "\nexit: Shuts down Ygg server"
+                    "\nclose_db: Closes the database connection"
+                    "\nopen_db: Reopens the database connection"
+                    "\nactive_games: Displays the count of active games"
+                )
             elif user_input.lower() == 'exit':
                 await shutdown()
             elif user_input.lower() == 'close_db':
-                print("Closing DB connection.")
+                print("\nClosing DB connection.")
                 await db_instance.close()
-                print("DB closed.")
+                print("\nDB closed.")
             elif user_input.lower() == 'open_db':
                 db_instance = dbClient()
-                print("DB instance reopened.")
+                await db_instance.connect()  # Re-establish the database connection
+                print("\nDB instance reopened.")
+            elif user_input.lower() == 'active_games':
+                if db_instance and db_instance.connection:
+                    async with db_instance.connection.cursor() as cursor:
+                        await cursor.execute("SELECT COUNT(*) FROM games WHERE game_active = 1;")
+                        active_game_count = (await cursor.fetchone())[0]
+                        print(f"\nThere are currently {active_game_count} active games.")
+                else:
+                    print("\nDatabase connection is not open. Use the 'open_db' command first.")
             else:
-                print(f"Unknown command: {user_input}")
+                print(f"\nUnknown command: {user_input}")
         except EOFError:
             break
 
+
+
 async def shutdown():
-    print("Shutting down gracefully.")
+    print("\nShutting down gracefully.")
     await db_instance.close()
-    print("DB connection closed.")
+    print("\nDB connection closed.")
     if discordBot.is_ready():
         await discordBot.close()
-        print("Bot stopped.")
+        print("\nBot stopped.")
     if observer:
         observer.stop()
-        print("Stopped monitoring dom_data_folder.")
+        print("\nStopped monitoring dom_data_folder.")
         observer.join()
     shutdown_signal.set()
-    print("Goodbye.")
+    print("\nGoodbye.")
 
 async def main():
     loop = asyncio.get_running_loop()

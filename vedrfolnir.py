@@ -1,5 +1,3 @@
-#game manager code
-
 import aiosqlite
 import asyncio
 import random
@@ -38,6 +36,34 @@ class dbClient:
                     game_era INTEGER,
                     game_map TEXT,
                     game_mods TEXT,
+                    research_rate INTEGER,
+                    research_random BOOLEAN,
+                    hall_of_fame INTEGER,
+                    merc_slots INTEGER,
+                    global_slots INTEGER,
+                    indie_str INTEGER,
+                    magicsites INTEGER,
+                    eventrarity INTEGER,
+                    richness INTEGER,
+                    resources INTEGER,
+                    recruitment INTEGER,
+                    supplies INTEGER,
+                    masterpass TEXT,
+                    startprov INTEGER,
+                    renaming BOOLEAN,
+                    scoregraphs INTEGER,
+                    noartrest BOOLEAN,
+                    nolvl9rest BOOLEAN,
+                    teamgame BOOLEAN,
+                    clustered BOOLEAN,
+                    edgestart BOOLEAN,
+                    story_events INTEGER,
+                    ai_level INTEGER,
+                    no_going_ai BOOLEAN,
+                    conqall BOOLEAN,
+                    thrones TEXT,
+                    requiredap INTEGER,
+                    cataclysm INTEGER,
                     game_running BOOLEAN,
                     channel_id TEXT,
                     game_active BOOLEAN NOT NULL,
@@ -68,42 +94,161 @@ class dbClient:
         except Exception as e:
             print(f"Error during database setup: {e}")
 
-    async def create_game(self, game_name, game_port, game_era, game_map, game_mods, game_running, channel_id, game_active, process_pid, game_owner):
-        """Insert a new game into the games table."""
-        query = '''
-        INSERT INTO games (game_name, game_port, game_era, game_map, game_mods, game_running, channel_id, game_active, process_pid, game_owner)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
-        '''
+    async def create_game(
+    self,
+    game_name: str,
+    game_era: str,
+    research_random: str,
+    global_slots: int,
+    eventrarity: str,
+    masterpass: str,
+    teamgame: str,
+    story_events: str,
+    no_going_ai: str,
+    thrones: str,
+    requiredap: int,
+    # Default values for optional arguments
+    game_port: int = None,
+    research_rate: int = None,
+    hall_of_fame: int = None,
+    merc_slots: int = None,
+    indie_str: int = None,
+    magicsites: int = None,
+    richness: int = None,
+    resources: int = None,
+    recruitment: int = None,
+    supplies: int = None,
+    startprov: int = None,
+    renaming: bool = None,
+    scoregraphs: int = None,
+    noartrest: bool = None,
+    nolvl9rest: bool = None,
+    clustered: bool = None,
+    edgestart: bool = None,
+    ai_level: int = None,
+    conqall: bool = None,
+    cataclysm: int = None,
+    game_map: str = None,
+    game_running: bool = False,
+    game_mods: str = "[]",
+    channel_id: str = None,
+    game_active: bool = True,
+    process_pid: int = None,
+    game_owner: str = None,
+    max_active_games: int = 8  # Predefined limit for active games
+    ):
+        """Insert a new game into the games table, with a limit on active games."""
+        
+        # Check the number of active games
+        async with self.connection.cursor() as cursor:
+            await cursor.execute("SELECT COUNT(*) FROM games WHERE game_active = 1;")
+            active_game_count = (await cursor.fetchone())[0]
+
+            if active_game_count >= max_active_games:
+                raise Exception(f"Cannot create a new game. The maximum number of active games ({max_active_games}) has been reached.")
+        
+        # Assign a free port if not provided
         if game_port is None:
             game_port = await self.assign_free_port()
-        if game_map == "DreamAtlas":
-            game_map = "Generated DA Map"
-        
+
+        # Prepare query and parameters
+        query = '''
+        INSERT INTO games (
+            game_name, game_port, game_era, game_map, game_mods, research_rate, research_random,
+            hall_of_fame, merc_slots, global_slots, indie_str, magicsites, eventrarity, richness,
+            resources, recruitment, supplies, masterpass, startprov, renaming, scoregraphs, noartrest,
+            nolvl9rest, teamgame, clustered, edgestart, story_events, ai_level, no_going_ai, conqall, thrones,
+            requiredap, cataclysm, game_running, channel_id, game_active, process_pid, game_owner
+        ) VALUES (
+            :game_name, :game_port, :game_era, :game_map, :game_mods, :research_rate, :research_random,
+            :hall_of_fame, :merc_slots, :global_slots, :indie_str, :magicsites, :eventrarity, :richness,
+            :resources, :recruitment, :supplies, :masterpass, :startprov, :renaming, :scoregraphs, :noartrest,
+            :nolvl9rest, :teamgame, :clustered, :edgestart, :story_events, :ai_level, :no_going_ai, :conqall, :thrones,
+            :requiredap, :cataclysm, :game_running, :channel_id, :game_active, :process_pid, :game_owner
+        );
+        '''
+        params = {
+            "game_name": game_name,
+            "game_port": game_port,
+            "game_era": game_era,
+            "game_map": game_map,
+            "game_mods": game_mods,
+            "research_rate": research_rate,
+            "research_random": research_random,
+            "hall_of_fame": hall_of_fame,
+            "merc_slots": merc_slots,
+            "global_slots": global_slots,
+            "indie_str": indie_str,
+            "magicsites": magicsites,
+            "eventrarity": eventrarity,
+            "richness": richness,
+            "resources": resources,
+            "recruitment": recruitment,
+            "supplies": supplies,
+            "masterpass": masterpass,
+            "startprov": startprov,
+            "renaming": renaming,
+            "scoregraphs": scoregraphs,
+            "noartrest": noartrest,
+            "nolvl9rest": nolvl9rest,
+            "teamgame": teamgame,
+            "clustered": clustered,
+            "edgestart": edgestart,
+            "story_events": story_events,
+            "ai_level": ai_level,
+            "no_going_ai": no_going_ai,
+            "conqall": conqall,
+            "thrones": thrones,
+            "requiredap": requiredap,
+            "cataclysm": cataclysm,
+            "game_running": game_running,
+            "channel_id": channel_id,
+            "game_active": game_active,
+            "process_pid": process_pid,
+            "game_owner": game_owner,
+        }
+
+        # Insert the new game into the database
         async with self.connection.cursor() as cursor:
-            await cursor.execute(query, (game_name, game_port, game_era, game_map, game_mods, game_running, channel_id, game_active, process_pid, game_owner ))
+            await cursor.execute(query, params)
             await self.connection.commit()
             return cursor.lastrowid
-            
+
+
+
     async def create_timer(self, game_id, timer_default, timer_length, timer_running, remaining_time):
         query = '''
         INSERT INTO gameTimers (game_id, timer_default, timer_length, timer_running, remaining_time)
-        VALUES (?, ?, ?, ?, ?);
+        VALUES (:game_id, :timer_default, :timer_length, :timer_running, :remaining_time);
         '''
+        params = {
+            "game_id": game_id,
+            "timer_default": timer_default,
+            "timer_length": timer_length,
+            "timer_running": timer_running,
+            "remaining_time": remaining_time
+        }
 
         async with self.connection.cursor() as cursor:
-            await cursor.execute(query, (game_id, timer_default, timer_length, timer_running, remaining_time))
+            await cursor.execute(query, params)
             await self.connection.commit()
             return cursor.lastrowid
-        
 
     async def add_player(self, game_id, player_id, nation, turn_status):
         """Insert a new player into the players table."""
         query = '''
         INSERT INTO players (game_id, player_id, nation, turn_status)
-        VALUES (?, ?, ?, ?);
+        VALUES (:game_id, :player_id, :nation, :turn_status);
         '''
+        params = {
+            "game_id": game_id,
+            "player_id": player_id,
+            "nation": nation,
+            "turn_status": turn_status
+        }
+
         async with self.connection.cursor() as cursor:
-            await cursor.execute(query, (game_id, player_id, nation, turn_status))
+            await cursor.execute(query, params)
             await self.connection.commit()
 
     async def get_active_game_channels(self):
@@ -114,48 +259,51 @@ class dbClient:
         async with self.connection.cursor() as cursor:
             await cursor.execute(query)
             rows = await cursor.fetchall()
-            # Extract channel_id from rows
             return [int(row[0]) for row in rows]
 
     async def update_process_pid(self, game_id, pid):
         query = """
         UPDATE games
-        SET process_pid = ?
-        WHERE game_id = ?
+        SET process_pid = :process_pid
+        WHERE game_id = :game_id
         """
+        params = {"process_pid": pid, "game_id": game_id}
+
         async with self.connection.cursor() as cursor:
-            await cursor.execute(query, (pid, game_id))
+            await cursor.execute(query, params)
             await self.connection.commit()
             print(f"Updated process_pid to {pid} for game_id {game_id}")
 
     async def update_game_running(self, game_id, status):
         query = """
         UPDATE games
-        SET game_running = ?
-        WHERE game_id = ?
+        SET game_running = :game_running
+        WHERE game_id = :game_id
         """
+        params = {"game_running": status, "game_id": game_id}
+
         async with self.connection.cursor() as cursor:
-            await cursor.execute(query, (status, game_id))
+            await cursor.execute(query, params)
             await self.connection.commit()
             print(f"Updated game_running to {status}")
 
     async def get_map(self, game_id):
         """Retrieve the map associated with a specific game."""
         query = '''
-        SELECT game_map FROM games WHERE game_id = ?;
+        SELECT game_map FROM games WHERE game_id = :game_id;
         '''
         async with self.connection.cursor() as cursor:
-            await cursor.execute(query, (game_id,))
+            await cursor.execute(query, {"game_id": game_id})
             result = await cursor.fetchone()
             return result[0] if result else None
 
     async def get_mods(self, game_id):
         """Retrieve the mods associated with a specific game."""
         query = '''
-        SELECT game_mods FROM games WHERE game_id = ?;
+        SELECT game_mods FROM games WHERE game_id = :game_id;
         '''
         async with self.connection.cursor() as cursor:
-            await cursor.execute(query, (game_id,))
+            await cursor.execute(query, {"game_id": game_id})
             result = await cursor.fetchone()
             return result[0].split(',') if result and result[0] else []
 
@@ -163,11 +311,13 @@ class dbClient:
         """Update the map associated with a specific game."""
         query = '''
         UPDATE games
-        SET game_map = ?
-        WHERE game_id = ?;
+        SET game_map = :new_map
+        WHERE game_id = :game_id;
         '''
+        params = {"new_map": new_map, "game_id": game_id}
+
         async with self.connection.cursor() as cursor:
-            await cursor.execute(query, (new_map, game_id))
+            await cursor.execute(query, params)
             await self.connection.commit()
             print(f"Updated game_map to {new_map} for game_id {game_id}")
 
@@ -175,34 +325,34 @@ class dbClient:
         """Update the mods associated with a specific game."""
         query = '''
         UPDATE games
-        SET game_mods = ?
-        WHERE game_id = ?;
+        SET game_mods = :game_mods
+        WHERE game_id = :game_id;
         '''
+        params = {"game_mods": ','.join(new_mods), "game_id": game_id}
+
         async with self.connection.cursor() as cursor:
-            # Store mods as a comma-separated string
-            mods_str = ','.join(new_mods)
-            await cursor.execute(query, (mods_str, game_id))
+            await cursor.execute(query, params)
             await self.connection.commit()
             print(f"Updated game_mods to {new_mods} for game_id {game_id}")
 
     async def get_game_info(self, game_id):
         """Fetch all info about a specific game."""
         query = '''
-        SELECT * FROM games WHERE game_id = ?;
+        SELECT * FROM games WHERE game_id = :game_id;
         '''
         async with self.connection.cursor() as cursor:
-            await cursor.execute(query, (game_id,))
+            await cursor.execute(query, {"game_id": game_id})
             return await cursor.fetchone()
 
     async def get_players_in_game(self, game_id):
         """Fetch all players in a specific game."""
         query = '''
-        SELECT * FROM players WHERE game_id = ?;
+        SELECT * FROM players WHERE game_id = :game_id;
         '''
         async with self.connection.cursor() as cursor:
-            await cursor.execute(query, (game_id,))
+            await cursor.execute(query, {"game_id": game_id})
             return await cursor.fetchall()
-    
+
     async def get_used_ports(self):
         """Get all currently used game ports from the database."""
         query = '''SELECT game_port FROM games;'''
@@ -210,7 +360,7 @@ class dbClient:
             await cursor.execute(query)
             rows = await cursor.fetchall()
             return [row[0] for row in rows if row[0] is not None]
-        
+
     async def assign_free_port(self):
         used_ports = await self.get_used_ports()
 
@@ -218,15 +368,15 @@ class dbClient:
             random_port = random.randint(49152, 65535)
             if random_port not in used_ports:
                 return random_port
-            
+
     async def get_game_id_by_channel(self, channel_id: int) -> int | None:
         """Retrieve the game_id associated with a given channel_id from the games table."""
         query = '''
         SELECT game_id
         FROM games
-        WHERE channel_id = ?;
+        WHERE channel_id = :channel_id;
         '''
         async with self.connection.cursor() as cursor:
-            await cursor.execute(query, (channel_id,))
+            await cursor.execute(query, {"channel_id": channel_id})
             result = await cursor.fetchone()
             return result[0] if result else None
