@@ -2,15 +2,16 @@
 
 
 import discord
-from discord import app_commands, Embed
+from discord import app_commands, Embed, Color
 from functools import wraps
 from typing import Callable, Awaitable, List, Dict, Optional, Union
 import asyncio
 from bifrost import bifrost
 from pathlib import Path
+from datetime import datetime, timedelta, timezone
 
-def require_active_channel(bot):
-    """Decorator to restrict commands to active game channels or bot channels."""
+def require_bot_channel(bot):
+    """Decorator to restrict commands to bot-specific channels or channels linked to active games."""
     async def predicate(interaction: discord.Interaction) -> bool:
         # Combine active game channels with bot_channels
         active_game_channels = await bot.db_instance.get_active_game_channels()
@@ -32,6 +33,36 @@ def require_active_channel(bot):
         return wrapped
 
     return wrapper
+
+
+def descriptive_time_breakdown(seconds: int) -> str:
+    """
+    Format a duration in seconds into a descriptive breakdown.
+
+    Args:
+        seconds (int): The total duration in seconds.
+
+    Returns:
+        str: A descriptive breakdown of the duration.
+    """
+    days, seconds = divmod(seconds, 86400)
+    hours, seconds = divmod(seconds, 3600)
+    minutes, seconds = divmod(seconds, 60)
+
+    parts = []
+    if days > 0:
+        parts.append(f"{days} day{'s' if days != 1 else ''}")
+    if hours > 0:
+        parts.append(f"{hours} hour{'s' if hours != 1 else ''}")
+    if minutes > 0:
+        parts.append(f"{minutes} minute{'s' if minutes != 1 else ''}")
+    if seconds > 0:
+        parts.append(f"{seconds} second{'s' if seconds != 1 else ''}")
+
+    return ", ".join(parts) if parts else "0 seconds"
+
+
+
 
 
 def serverStatusJsonToDiscordFormatted(status_json):
@@ -82,6 +113,35 @@ class discordClient(discord.Client):
         self.config = config
         self.nidhogg = nidhogg
 
+    async def send_game_message(self, game_id: int, message: str):
+        """
+        Handles sending a message to the correct Discord channel based on the game ID.
+
+        Args:
+            game_id (int): The ID of the game.
+            message (str): The message to send.
+
+        Returns:
+            dict: A response dictionary indicating success or failure.
+        """
+        try:
+            # Retrieve the channel_id based on the game_id
+            channel_id = await self.db_instance.get_channel_id_by_game(game_id)
+            print(f"Channel ID for game {game_id}: {channel_id}")
+            if not channel_id:
+                return {"status": "error", "message": "Invalid game ID or channel not found"}
+
+            # Fetch the channel and send the message
+            channel = self.get_channel(channel_id) or await self.fetch_channel(channel_id)
+            if channel:
+                await channel.send(message)
+                return {"status": "success", "message": "Message sent"}
+            else:
+                return {"status": "error", "message": "Unable to find the channel"}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
+
     async def setup_hook(self):
         
         @self.tree.command(
@@ -89,66 +149,50 @@ class discordClient(discord.Client):
             description="Creates a brand new game",
             guild=discord.Object(id=self.guild_id)
         )
-        @require_active_channel(self)
+        @require_bot_channel(self)
         async def new_game_command(
-            interaction: discord.Interaction, 
-            game_name: str, 
-            game_era: str, 
-            research_random: str, 
-            global_slots: int, 
-            event_rarity: str, 
-            master_pass: str, 
-            disicples: str, 
-            story_events: str, 
-            no_going_ai: str, 
-            lv1_thrones: int, 
-            lv2_thrones: int, 
-            lv3_thrones: int, 
+            interaction: discord.Interaction,
+            game_name: str,
+            game_era: str,
+            research_random: str,
+            global_slots: int,
+            event_rarity: str,
+            master_pass: str,
+            disicples: str,
+            story_events: str,
+            no_going_ai: str,
+            lv1_thrones: int,
+            lv2_thrones: int,
+            lv3_thrones: int,
             points_to_win: int
         ):
             try:
-                async def validate_choice(interaction, input_value, valid_map, field_name):
-                    if input_value not in valid_map:
-                        valid_options = ", ".join(valid_map.keys())
-                        await interaction.response.send_message(
-                            f"Invalid choice for {field_name}. Please choose from: {valid_options}.",
-                            ephemeral=True
-                        )
-                        return None
-                    return valid_map[input_value]
-
                 # Defer interaction to prevent timeout
                 await interaction.response.defer(ephemeral=True)
 
                 # Validate inputs
                 era_map = {"Early": 1, "Middle": 2, "Late": 3}
-                game_era_value = await validate_choice(interaction, game_era, era_map, "game_era")
+                game_era_value = era_map[game_era]
 
                 research_random_map = {"Even Spread": 1, "Random": 0}
-                research_random_value = await validate_choice(interaction, research_random, research_random_map, "research_random")
+                research_random_value = research_random_map[research_random]
 
                 event_rarity_map = {"Common": 1, "Rare": 2}
-                event_rarity_value = await validate_choice(interaction, event_rarity, event_rarity_map, "event_rarity")
+                event_rarity_value = event_rarity_map[event_rarity]
 
                 disicples_map = {"False": 1, "True": 0}
-                disicples_value = await validate_choice(interaction, disicples, disicples_map, "disicples")
+                disicples_value = disicples_map[disicples]
 
                 story_events_map = {"None": 0, "Some": 1, "Full": 2}
-                story_events_value = await validate_choice(interaction, story_events, story_events_map, "story_events")
+                story_events_value = story_events_map[story_events]
 
                 no_going_ai_map = {"True": 0, "False": 1}
-                no_going_ai_value = await validate_choice(interaction, no_going_ai, no_going_ai_map, "no_going_ai")
+                no_going_ai_value = no_going_ai_map[no_going_ai]
 
                 thrones_value = ",".join(map(str, [lv1_thrones, lv2_thrones, lv3_thrones]))
 
-                if not isinstance(points_to_win, int):
-                    await interaction.followup.send("points_to_win must be an integer.")
-                    return
-                elif points_to_win < 1:
-                    await interaction.followup.send("points_to_win must be at least 1.")
-                    return
-                elif points_to_win > lv1_thrones + lv2_thrones * 2 + lv3_thrones * 3:
-                    await interaction.followup.send("points_to_win must be no more than total points available.")
+                if points_to_win < 1 or points_to_win > lv1_thrones + lv2_thrones * 2 + lv3_thrones * 3:
+                    await interaction.followup.send("Invalid points to win.")
                     return
 
                 # Fetch guild and category
@@ -181,38 +225,38 @@ class discordClient(discord.Client):
                         requiredap=points_to_win,
                         game_map=None,
                         game_running=False,
+                        game_started=False,
                         game_mods="[]",
                         channel_id=new_channel_id,
                         game_active=True,
                         process_pid=None,
-                        game_owner=interaction.user.name
+                        game_owner=interaction.user.name,
+                        creation_version=self.nidhogg.get_version()
                     )
 
                     await self.db_instance.create_timer(
                         game_id=new_game_id,
-                        timer_default=1440,
-                        timer_length=1440,
+                        timer_default=86400,
+                        timer_length=86400,
                         timer_running=False,
-                        remaining_time=None
+                        remaining_time=86400
                     )
 
-                    # Success response only sent here
-                    await interaction.followup.send(f"Game '{game_name}' created successfully with channel '{new_channel.name}'!")
-
-                except Exception as e:
-                    # Rollback if database insertion fails
+                    await interaction.followup.send(f"Game '{game_name}' created successfully!")
+                except ValueError as e:
                     await new_channel.delete()
-                    await interaction.followup.send(
-                        f"An error occurred while creating the game in the database: {e}",
-                        ephemeral=True
-                    )
-
+                    await interaction.followup.send(str(e))
+                except Exception as e:
+                    await new_channel.delete()
+                    await interaction.followup.send(f"Unexpected error: {e}")
             except discord.Forbidden as e:
                 await interaction.response.send_message(f"Permission error: {e}", ephemeral=True)
             except discord.HTTPException as e:
                 await interaction.response.send_message(f"Failed to create channel: {e}", ephemeral=True)
             except Exception as e:
                 await interaction.response.send_message(f"Unexpected error: {e}", ephemeral=True)
+
+
 
 
 
@@ -282,26 +326,438 @@ class discordClient(discord.Client):
             except Exception as e:
                 print(f"Error sending autocomplete response: {e}")
 
+        
+        @new_game_command.autocomplete("no_going_ai")
+        async def no_going_ai_autocomplete(interaction: discord.Interaction, current: str):
+            # Provide predefined options
+            options = ["False", "True"]
+            matches = options if not current else [option for option in options if current.lower() in option.lower()]
+
+            # Convert to app_commands.Choice objects
+            suggestions = [app_commands.Choice(name=option, value=option) for option in matches]
+
+            try:
+                # Send the autocomplete suggestions
+                await interaction.response.autocomplete(suggestions[:25])
+            except Exception as e:
+                print(f"Error sending autocomplete response: {e}")
+
+        @new_game_command.autocomplete("disicples")
+        async def disicples_autocomplete(interaction: discord.Interaction, current: str):
+            # Provide predefined options
+            options = ["False", "True"]
+            matches = options if not current else [option for option in options if current.lower() in option.lower()]
+
+            # Convert to app_commands.Choice objects
+            suggestions = [app_commands.Choice(name=option, value=option) for option in matches]
+
+            try:
+                # Send the autocomplete suggestions
+                await interaction.response.autocomplete(suggestions[:25])
+            except Exception as e:
+                print(f"Error sending autocomplete response: {e}")
+
+
+        @new_game_command.autocomplete("story_events")
+        async def story_events_autocomplete(interaction: discord.Interaction, current: str):
+            # Provide predefined options
+            options = ["None", "Some", "Full"]
+            matches = options if not current else [option for option in options if current.lower() in option.lower()]
+
+            # Convert to app_commands.Choice objects
+            suggestions = [app_commands.Choice(name=option, value=option) for option in matches]
+
+            try:
+                # Send the autocomplete suggestions
+                await interaction.response.autocomplete(suggestions[:25])
+            except Exception as e:
+                print(f"Error sending autocomplete response: {e}")
+
+
+
+        
 
 
         @self.tree.command(
-                name="launch",
-                description="Launches game lobby.",
-                guild=discord.Object(id=self.guild_id)
+            name="launch",
+            description="Launches game lobby.",
+            guild=discord.Object(id=self.guild_id)
         )
-        @require_active_channel(self)
+        @require_bot_channel(self)
         async def launch_game_lobby(interaction: discord.Interaction):
-            # id = interaction.channel
-            # await interaction.response.send_message(f"Test method for startting game in channel {id}")
-            print("\nTrying to launch game")
+            # Acknowledge interaction to prevent timeout
+            await interaction.response.defer()  # Ensure the initial defer is also ephemeral
+            print(f"\nTrying to launch game in channel {interaction.channel}.")
+
+            # Get the game ID and game info
             game_id = await self.db_instance.get_game_id_by_channel(interaction.channel_id)
-            print(f"Launching game {game_id}")
-            if game_id is None:
-                await interaction.response.send_message("No game lobby is associated with this channel.")
+            if not game_id:
+                await interaction.followup.send("No game lobby is associated with this channel.")
                 return
-            await self.nidhogg.launchGameLobby(game_id, self.db_instance)
-            #await self.db_instance.update_process_pid(game_id, pid)
-            await interaction.response.send_message(f"Game lobby launched.")
+
+            game_info = await self.db_instance.get_game_info(game_id)
+            if not game_info:
+                await interaction.followup.send("Game information not found.")
+                return
+
+            # Check if the game is active
+            if not game_info["game_active"]:
+                await interaction.followup.send("This game is not marked as active and cannot be launched.")
+                print(f"\nFailed to launch game. Game {game_id} is inactive.")
+                return
+
+            # Check if the game map is set
+            if not game_info["game_map"]:
+                await interaction.followup.send("Map missing. Please use /select_map.")
+                print(f"\nFailed to launch game. Map missing in {interaction.channel}.")
+                return  # Exit the function early since the map is missing
+
+            print(f"Launching game {game_id}")
+
+            # Attempt to launch the game lobby
+            success = await self.nidhogg.launch_game_lobby(game_id, self.db_instance)
+            if success:
+                await interaction.followup.send(f"Game lobby launched for game ID: {game_id}.")
+            else:
+                await interaction.followup.send(f"Failed to launch game lobby for game ID: {game_id}.")
+
+            # Set game_running to true
+            try:
+                await self.db_instance.update_game_running(game_id, True)
+                print(f"Game: {game_info['game_name']} ID: {game_id} has been set to running.")
+            except Exception as e:
+                await interaction.followup.send(f"Failed to set game_running state in the database: {e}")
+
+
+
+        @self.tree.command(
+            name="start_game",
+            description="Starts a fresh game.",
+            guild=discord.Object(id=self.guild_id)
+        )
+        @require_bot_channel(self)
+        async def start_game(interaction: discord.Interaction):
+            # Acknowledge interaction to prevent timeout
+            await interaction.response.defer()
+            print(f"\nTrying to start game in channel {interaction.channel}.")
+
+            # Get the game ID associated with the channel
+            game_id = await self.db_instance.get_game_id_by_channel(interaction.channel_id)
+            
+            # Reject if no game ID is found
+            if game_id is None:
+                await interaction.followup.send("No game lobby is associated with this channel.")
+                return
+            
+            game_info = await self.db_instance.get_game_info(game_id)
+
+            # Reject if the map is missing
+            if not game_info["game_map"]:
+                await interaction.followup.send("Map missing. Please use /select_map.")
+                print(f"\nFailed to launch game. Map missing in {interaction.channel}.")
+                return
+            
+            # Reject if the game is not running
+            if not game_info["game_running"]:
+                await interaction.followup.send("Game is not running. Please use /launch.")
+                print(f"\nFailed to start game. Game not running in {interaction.channel}.")
+                return
+
+            print(f"Starting game {game_id}")
+
+            # Call Bifrost to backup the .2h files
+            try:
+                await bifrost.backup_2h_files(game_id, game_info["game_name"], config=self.config)
+                print(f"Backup completed for game ID {game_id}.")
+            except Exception as e:
+                await interaction.followup.send(f"Failed to backup game files: {e}")
+                return
+            
+            # Use Nidhogg to force host via domcmd
+            try:
+                await self.nidhogg.force_game_host(game_id, self.config, self.db_instance)
+                await interaction.followup.send(f"Game ID {game_id} has been successfully started. Please wait a few seconds.")
+            except Exception as e:
+                await interaction.followup.send(f"Failed to force the game to start: {e}")
+                return
+            
+            # Set game started to true
+            try:
+                await self.db_instance.set_game_started_value(game_id, True)
+                print(f"Game ID {game_id} has been marked as started.")
+            except Exception as e:
+                await interaction.followup.send(f"Failed to set game started state in the database: {e}")
+                return
+
+
+
+        @self.tree.command(
+            name="restart_game_to_lobby",
+            description="Restarts the game back to the lobby state.",
+            guild=discord.Object(id=self.guild_id)
+        )
+        @require_bot_channel(self)
+        async def restart_game_to_lobby(interaction: discord.Interaction):
+            """Restarts the game associated with the current channel back to the lobby state."""
+            # Acknowledge interaction to prevent timeout
+            await interaction.response.defer(ephemeral=True)
+
+            # Get the game ID associated with the current channel
+            game_id = await self.db_instance.get_game_id_by_channel(interaction.channel_id)
+            if not game_id:
+                await interaction.followup.send("No game is associated with this channel.", ephemeral=True)
+                return
+
+            # Fetch game information
+            game_info = await self.db_instance.get_game_info(game_id)
+            if not game_info:
+                await interaction.followup.send("Game information not found in the database.", ephemeral=True)
+                return
+
+            # Check if the game has started
+            if game_info["game_started"]:
+                await interaction.followup.send("The game has not been started. Cannot restart to lobby.", ephemeral=True)
+                return
+
+            # Kill the game
+            try:
+                await self.nidhogg.kill_game_lobby(game_id, self.db_instance)
+                print(f"Game process for game ID {game_id} has been killed.")
+            except Exception as e:
+                await interaction.followup.send(f"Failed to kill the game process: {e}", ephemeral=True)
+                return
+
+            # Restore .2h files from the backup
+            try:
+                await bifrost.restore_2h_files(game_id, game_info["game_name"], config=self.config)
+                print(f"Backup files restored for game ID {game_id}.")
+            except Exception as e:
+                await interaction.followup.send(f"Failed to restore game files: {e}", ephemeral=True)
+                return
+            
+            success = await self.nidhogg.launch_game_lobby(game_id, self.db_instance)
+            if success:
+                await interaction.followup.send(f"Game lobby launched for game ID: {game_id}.")
+            else:
+                await interaction.followup.send(f"Failed to launch game lobby for game ID: {game_id}.")
+
+            # Reset the `game_started` field in the database
+            try:
+                await self.db_instance.set_game_started_value(game_id, False)
+                print(f"Game ID {game_id} has been reset to the lobby state.")
+            except Exception as e:
+                await interaction.followup.send(f"Failed to reset game to lobby state in the database: {e}", ephemeral=True)
+                return
+
+            await interaction.followup.send(f"Game ID {game_id} has been successfully restarted back to the lobby.", ephemeral=True)
+
+        
+
+
+        @self.tree.command(
+            name="undone",
+            description="Returns current turn status",
+            guild=discord.Object(id=self.guild_id)
+        )
+        @require_bot_channel(self)
+        async def undone_check(interaction: discord.Interaction):
+            """Returns current turn info"""
+
+            await interaction.response.defer()
+
+            # Get the game ID associated with the current channel
+            game_id = await self.db_instance.get_game_id_by_channel(interaction.channel_id)
+            if not game_id:
+                await interaction.followup.send("No game is associated with this channel.")
+                return
+
+            # Get game info
+            game_info = await self.db_instance.get_game_info(game_id)
+            if not game_info:
+                await interaction.followup.send("Game information not found in the database.", ephemeral=True)
+                return
+
+            try:
+                raw_status = await self.nidhogg.query_game_status(game_id, self.db_instance)
+                timer_table = await self.db_instance.get_game_timer(game_id)
+
+                # Parse the response
+                lines = raw_status.split("\n")
+                game_name = lines[2].split(":")[1].strip()
+                turn = lines[4].split(":")[1].strip()
+                #time_left = lines[5].split(":")[1].strip()
+                time_left = timer_table["remaining_time"]
+
+                #caluclate turn date
+
+                current_time = datetime.now(timezone.utc)
+                future_time = current_time + timedelta(seconds=time_left)
+                discord_timestamp = f"<t:{int(future_time.timestamp())}:F>"
+
+
+                played_nations = []
+                played_but_not_finished = []
+                undone_nations = []
+
+                for line in lines[6:]:
+                    if "played, but not finished" in line:
+                        nation = line.split(":")[1].split(",")[0].strip()
+                        played_but_not_finished.append(nation)
+                    elif "played" in line:
+                        nation = line.split(":")[1].split(",")[0].strip()
+                        played_nations.append(nation)
+                    elif "(-)" in line:
+                        nation = line.split(":")[1].split(",")[0].strip()
+                        undone_nations.append(nation)
+
+                # Create embeds
+                embeds = []
+
+                # Game Info embed
+                game_info_embed = discord.Embed(
+                    title=f"Turn {turn}",
+                    #description=f"**Name**: {game_name}\n**Turn**: {turn}\n**Time Left**: {time_left}\n**Turn",
+                    description=f"Next turn:\n{discord_timestamp} in {descriptive_time_breakdown(time_left)}",
+                    color=discord.Color.blue()
+                )
+                embeds.append(game_info_embed)
+
+                # Played Nations embed
+                if played_nations:
+                    played_embed = discord.Embed(
+                        title="✅ Played Nations",
+                        description="\n".join(played_nations),
+                        color=discord.Color.green()
+                    )
+                    embeds.append(played_embed)
+
+                # Played But Not Finished embed
+                if played_but_not_finished:
+                    unfinished_embed = discord.Embed(
+                        title="⚠️ Played But Not Finished",
+                        description="\n".join(played_but_not_finished),
+                        color=discord.Color.gold()
+                    )
+                    embeds.append(unfinished_embed)
+
+                # Undone Nations embed
+                if undone_nations:
+                    undone_embed = discord.Embed(
+                        title="❌ Undone Nations",
+                        description="\n".join(undone_nations),
+                        color=discord.Color.red()
+                    )
+                    embeds.append(undone_embed)
+
+                # Send all embeds in one response
+                await interaction.followup.send(embeds=embeds)
+
+            except Exception as e:
+                await interaction.followup.send(f"Error querying turn for game id:{game_id}\n{str(e)}")
+
+
+
+
+
+
+
+
+
+
+        @self.tree.command(
+            name="force-host",
+            description="Forces the game to start hosting immediately.",
+            guild=discord.Object(id=self.guild_id)
+        )
+        @require_bot_channel(self)
+        async def force_host(interaction: discord.Interaction):
+            """Forces the game associated with the current channel to start hosting."""
+            # Acknowledge interaction to prevent timeout
+            await interaction.response.defer(ephemeral=True)
+
+            # Get the game ID associated with the current channel
+            game_id = await self.db_instance.get_game_id_by_channel(interaction.channel_id)
+            if not game_id:
+                await interaction.followup.send("No game is associated with this channel.", ephemeral=True)
+                return
+
+            # Fetch game information
+            game_info = await self.db_instance.get_game_info(game_id)
+            if not game_info:
+                await interaction.followup.send("Game information not found in the database.", ephemeral=True)
+                return
+
+            # Check if the game is currently running
+            if not game_info["game_running"]:
+                await interaction.followup.send("The game is not currently running. Cannot force it to host.", ephemeral=True)
+                return
+
+            # Attempt to write the domcmd file to force hosting
+            try:
+                await bifrost.force_game_host(game_id, self.config, self.db_instance)
+                await interaction.followup.send(f"Game ID {game_id} ({game_info['game_name']}) has been successfully forced to host.", ephemeral=True)
+                print(f"Game ID {game_id} ({game_info['game_name']}) successfully forced to host.")
+            except Exception as e:
+                await interaction.followup.send(f"Failed to force the game to start: {e}", ephemeral=True)
+                print(f"Error forcing game ID {game_id} ({game_info['game_name']}) to host: {e}")
+
+
+
+
+        @self.tree.command(
+            name="kill",
+            description="Kills the game lobby process.",
+            guild=discord.Object(id=self.guild_id)
+        )
+        @require_bot_channel(self)
+        async def kill_game_lobby(interaction: discord.Interaction):
+            # Acknowledge interaction to prevent timeout
+            await interaction.response.defer(ephemeral=True)
+
+            try:
+                # Get the game ID from the channel ID
+                game_id = await self.db_instance.get_game_id_by_channel(interaction.channel_id)
+                if game_id is None:
+                    await interaction.followup.send("No game lobby is associated with this channel.", ephemeral=True)
+                    return
+
+                # Delegate the killing of the process to nidhogg
+                try:
+                    await self.nidhogg.kill_game_lobby(game_id, self.db_instance)
+                    await interaction.followup.send(f"Game lobby process for game ID: {game_id} has been killed.", ephemeral=True)
+                except ValueError as ve:
+                    await interaction.followup.send(str(ve), ephemeral=True)
+                except Exception as e:
+                    await interaction.followup.send(f"An error occurred while attempting to kill the game lobby: {e}", ephemeral=True)
+
+            except Exception as e:
+                await interaction.followup.send(f"An error occurred: {e}", ephemeral=True)
+
+
+
+        @self.tree.command(
+            name="get_version",
+            description="Fetches the version of the Dominions server executable.",
+            guild=discord.Object(id=self.guild_id)  # Replace with your actual guild ID
+        )
+        async def get_version(interaction: discord.Interaction):
+            """
+            Fetch the version of the Dominions server executable and return it.
+            """
+            try:
+                # Acknowledge the interaction to prevent timeout
+                await interaction.response.defer(ephemeral=True)
+
+                # Fetch the version information
+                version_info = self.nidhogg.get_version()
+
+                # Send the version information as a follow-up response
+                await interaction.followup.send(f"Dominions Server Version: `{version_info}`", ephemeral=True)
+            except Exception as e:
+                # Handle any exceptions and respond with an error message
+                await interaction.followup.send(f"Error fetching version: {e}", ephemeral=True)
+
+
 
 
         @self.tree.command(
@@ -309,7 +765,7 @@ class discordClient(discord.Client):
             description="Checks server status",
             guild=discord.Object(id=self.guild_id) 
         )
-        @require_active_channel(self)
+        @require_bot_channel(self)
         async def wake_command(interaction: discord.Interaction):
             response = serverStatusJsonToDiscordFormatted(self.nidhogg.getServerStatus())
             embedResponse = discord.Embed(title="Server Status", type="rich")
@@ -322,7 +778,7 @@ class discordClient(discord.Client):
             description="Echos back text",
             guild=discord.Object(id=self.guild_id)
         )
-        @require_active_channel(self)
+        @require_bot_channel(self)
         async def echo_command(interaction: discord.Interaction, echo_text:str, your_name:str):
             await interaction.response.send_message(echo_text + your_name)
 
@@ -331,7 +787,7 @@ class discordClient(discord.Client):
             description="Upload your map.",
             guild=discord.Object(id=self.guild_id)
         )
-        @require_active_channel(self)
+        @require_bot_channel(self)
         async def map_upload_command(interaction: discord.Interaction, file: discord.Attachment):
             try:
                 # Read the file data as a binary blob
@@ -359,7 +815,7 @@ class discordClient(discord.Client):
             description="Upload your mod.",
             guild=discord.Object(id=self.guild_id)
         )
-        @require_active_channel(self)
+        @require_bot_channel(self)
         async def mod_upload_command(interaction: discord.Interaction, file: discord.Attachment):
             try:
                 # Read the file data as a binary blob
@@ -484,7 +940,7 @@ class discordClient(discord.Client):
             description="Select mods for game.",
             guild=discord.Object(id=self.guild_id),
         )
-        @require_active_channel(self)
+        @require_bot_channel(self)
         async def select_mods_dropdown(interaction: discord.Interaction):
 
             # Get the current game ID associated with the channel
@@ -516,7 +972,7 @@ class discordClient(discord.Client):
             description="Select map for game.",
             guild=discord.Object(id=self.guild_id),
         )
-        @require_active_channel(self)
+        @require_bot_channel(self)
         async def select_map_dropdown(interaction: discord.Interaction):
 
             # Get the current game ID associated with the channel
@@ -552,6 +1008,36 @@ class discordClient(discord.Client):
                 await interaction.followup.send("No selection was made.", ephemeral=True)
 
 
+        @self.tree.command(
+            name="list_active_games",
+            description="Lists all active games.",
+            guild=discord.Object(id=self.guild_id)  # Replace with your actual guild ID
+        )
+        @require_bot_channel(self)
+        async def list_active_games(interaction: discord.Interaction):
+            await interaction.response.defer(ephemeral=True)  # Acknowledge the interaction
+
+            try:
+                active_games = await self.db_instance.get_active_games()
+
+                if not active_games:
+                    await interaction.followup.send("There are currently no active games.", ephemeral=True)
+                    return
+
+                # Format the list of active games
+                game_list = "\n".join(
+                    f"- **{game['game_name']}** (ID: {game['game_id']}, Era: {game['game_era']}, Owner: {game['game_owner']}, "
+                    f"Created: {game['creation_date']}, Version: {game['creation_version']})"
+                    for game in active_games
+                )
+
+                # Send the active game list
+                await interaction.followup.send(f"**Active Games:**\n{game_list}", ephemeral=True)
+
+            except Exception as e:
+                await interaction.followup.send(f"An error occurred: {e}", ephemeral=True)
+
+
 
 
         @self.tree.command(
@@ -559,7 +1045,7 @@ class discordClient(discord.Client):
             description="Test the generic dropdown menu.",
             guild=discord.Object(id=self.guild_id)
         )
-        @require_active_channel(self)
+        @require_bot_channel(self)
         async def dropdown_test_command(interaction: discord.Interaction):
 
             options = [{'name': 'smackdown_ea1', 'location': 'smackdown_ea1/smackdown_ea1.map','yggemoji': 'DreamAtlas:', 'yggdescr': '"for winners only'},

@@ -5,7 +5,10 @@ import re
 import os
 import stat
 import threading
+import asyncio
 from bifrost import bifrost
+import signal
+import shlex 
 
 class nidhogg:
     # Load configuration and set Dominions folder path
@@ -51,70 +54,266 @@ class nidhogg:
             print(f"Error fetching server status: {e}")
             return {}
 
+
+
+
     @staticmethod
     async def launch_game_lobby(game_id, db_instance):
-        """
-        Launch a new Dominions game lobby.
-
-        Args:
-            game_id (int): The ID of the game.
-            db_instance: Database instance to fetch game details.
-        """
         try:
             game_details = await db_instance.get_game_info(game_id=game_id)
-            
-            # Base command for launching the game
+            if not game_details:
+                print(f"No game found with ID: {game_id}")
+                return False
+
+            # Extract values
+            game_name = game_details["game_name"]
+            game_port = game_details["game_port"]
+            game_era = game_details["game_era"]
+            game_map = game_details["game_map"]
+            global_slots = game_details["global_slots"]
+            eventrarity = game_details["eventrarity"]
+            masterpass = game_details["masterpass"]
+            requiredap = game_details["requiredap"]
+            research_random = game_details["research_random"]
+            global_slots = game_details["global_slots"]
+            eventrarity = game_details["eventrarity"]
+            masterpass = game_details["masterpass"]
+            teamgame = game_details["teamgame"]
+            story_events = game_details["story_events"]
+            no_going_ai = game_details["no_going_ai"]
+            requiredap = game_details["requiredap"]
+            thrones = game_details["thrones"]
+
+            # Construct the command
             command = [
                 str(nidhogg.dominions_folder / "dom6_amd64"),
                 "--tcpserver",
                 "--ipadr", "localhost",
-                "--port", str(game_details[2]),
-                "--era", str(game_details[3]),
-                "--newgame", str(game_details[1]),
-                "--noclientstart"
+                "--newgame", game_name,
+                "--port", str(game_port),
+                "--era", str(game_era),
+                "--globals", str(global_slots),
+                "--eventrarity", str(eventrarity),
+                "--masterpass", masterpass,
+                "--requiredap", str(requiredap),
+                "--renaming",
+                "--noclientstart",
+                #"--textonly"
             ]
 
-            # Add specific parameters based on map type
-            if game_details[4] == "Generated DA Map":
-                command.extend(["--mapfile", "smackdown_ea1"])
-            elif game_details[4] == "Vanilla":
-                command.extend(["--randmap", "15"])
+            # Add thrones logic
+            throne_counts = thrones.split(",")
+            command.extend(["--thrones"] + throne_counts)
+
+
+            story_events_map = {0: "--nostoryevents", 1: "--storyevents", 2: "--allstoryevents"}
+            if story_events in story_events_map:
+                command.append(story_events_map[story_events])
+
+            # Add logic for no_going_ai
+            if no_going_ai == 0:
+                command.append("--nonewai")
+
+            # Add logic for research random
+            if research_random == 1:  # Even Spread
+                command.append("--norandres")
+
+            # Add map logic
+            vanilla_map_sizes = {"vanilla_10": "10", "vanilla_15": "15", "vanilla_20": "20", "vanilla_25": "25"}
+            if game_map in vanilla_map_sizes:
+                command.extend(["--randmap", vanilla_map_sizes[game_map]])
             else:
-                print("Uploaded Maps not implemented yet")
-                return None
+                command.extend(["--mapfile", game_map])
 
-            # Launch the process in a detached thread
-            def launch_process():
-                try:
-                    process = subprocess.Popen(
-                        command,
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                        stdin=subprocess.DEVNULL
-                    )
-                    print(f"Process launched with PID: {process.pid}")
-                    return process.pid
-                except Exception as e:
-                    print(f"Failed to launch process: {e}")
-                    return None
-
-            pid_container = []
-
-            def thread_target():
-                pid = launch_process()
-                if pid is not None:
-                    pid_container.append(pid)
-
-            thread = threading.Thread(target=thread_target, daemon=True)
-            thread.start()
-            thread.join()
+            # Add team game logic
+            if teamgame == 0:
+                command.append("--teamgame")
             
-            # Update the database with the process ID
-            if pid_container:
-                await db_instance.update_process_pid(game_id, int(pid_container[0]))
+            command.append("--statfile")
+            command.append("--statuspage")
+
+            # Prepare the screen command
+            screen_name = f"dom_{game_id}"
+            screen_command = ["screen", "-dmS", screen_name] + command
+
+            # Launch the screen session
+            screen_process = subprocess.Popen(
+                screen_command,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
+            )
+            print(f"Screen process launched with PID: {screen_process.pid}")
+            print({shlex.join(screen_command)})
+
+            # Wait for the `dom6_amd64` process to start
+            await asyncio.sleep(1)
+
+            # Retrieve the PID of the `dom6_amd64` process from the screen session
+            try:
+                result = subprocess.check_output(["screen", "-ls", screen_name]).decode("utf-8")
+                # Extract the process PID from the session details
+                actual_pid = None
+                for line in result.splitlines():
+                    if f"{screen_name}" in line:
+                        # Screen lines contain the PID at the start
+                        actual_pid = int(line.split(".")[0].strip())
+                        break
+
+                if not actual_pid:
+                    print(f"Failed to find process for screen session: {screen_name}")
+                    return False
+
+                print(f"Actual PID for game ID {game_id}: {actual_pid}")
+
+                # Update the database with the correct PID
+                await db_instance.update_process_pid(game_id, actual_pid)
                 await db_instance.update_game_running(game_id, 1)
+
+                return True
+
+            except subprocess.CalledProcessError as e:
+                print(f"Error retrieving screen session: {e}")
+                return False
+
         except Exception as e:
             print(f"Error launching game lobby: {e}")
+            return False
+
+
+    @staticmethod
+    async def force_game_host(game_id: int, config: dict, db_instance):
+        """
+        Calls Bifrost's force_game_host to write the domcmd file.
+
+        Args:
+            game_id (int): The game ID.
+            config (dict): Configuration containing 'dom_data_folder'.
+            db_instance: Database instance for retrieving game details.
+
+        Raises:
+            Exception: If any error occurs during the execution.
+        """
+        try:
+            await bifrost.force_game_host(game_id, config, db_instance)
+            print(f"Force host operation completed for game ID {game_id}.")
+        except Exception as e:
+            print(f"Error in Nidhogg's force_game_host: {e}")
+            raise e
+
+
+
+    @staticmethod
+    async def kill_game_lobby(game_id, db_instance):
+        """
+        Kill the process for the specified game ID.
+
+        Args:
+            game_id (int): The ID of the game.
+            db_instance: Database instance to fetch and update game details.
+        """
+        try:
+            # Fetch game details from the database
+            game_details = await db_instance.get_game_info(game_id=game_id)
+            if not game_details or "process_pid" not in game_details or not game_details["process_pid"]:
+                raise ValueError(f"No running process found for game ID: {game_id}.")
+
+            process_pid = game_details["process_pid"]
+
+            # Attempt to kill the process
+            os.kill(process_pid, signal.SIGTERM)  # Use SIGTERM to terminate the process
+            print(f"Process with PID {process_pid} for game ID {game_id} has been killed.")
+
+            # Update the database to reflect the game is no longer running
+            await db_instance.update_game_running(game_id, 0)
+        except ProcessLookupError:
+            raise ValueError(f"Process with PID {process_pid} not found.")
+        except Exception as e:
+            raise RuntimeError(f"Failed to kill process for game ID {game_id}: {e}")
+
+    @staticmethod
+    def get_version():
+        """
+        Get the version of the Dominions server executable.
+
+        Returns:
+            str: The version number (e.g., "6.25") if successful, or an error message otherwise.
+        """
+        try:
+            # Run the executable with the version flag
+            result = subprocess.run(
+                [str(nidhogg.dominions_folder / "dom6_amd64"), "--version"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+
+            # Check for errors in the command execution
+            if result.returncode != 0:
+                return f"Error fetching version: {result.stderr.strip()}"
+
+            # Extract version number from the output
+            version_match = re.search(r"version (\d+\.\d+)", result.stdout)
+            if version_match:
+                return version_match.group(1)  # Return the extracted version number
+            else:
+                return "Version information not found in output."
+
+        except Exception as e:
+            return f"Exception while fetching version: {e}"
+
+    @staticmethod
+    async def query_game_status(game_id: int, db_instance):
+        """
+        Query the status of a running game using the --tcpquery flag.
+
+        Args:
+            game_id (int): The ID of the game.
+            db_instance: The database instance to fetch the game details.
+
+        Returns:
+            str: The raw response from the Dominions executable.
+        """
+        try:
+            # Fetch the game details to get the port
+            game_details = await db_instance.get_game_info(game_id)
+            if not game_details:
+                raise ValueError(f"No game found with ID {game_id}.")
+
+            game_port = game_details.get("game_port")
+            if not game_port:
+                raise ValueError(f"No port found for game ID {game_id}.")
+
+            # Construct the query command
+            command = [
+                str(nidhogg.dominions_folder / "dom6_amd64"),
+                "--tcpquery",
+                "--ipadr", "localhost",
+                "--port", str(game_port)
+            ]
+
+            print({shlex.join(command)})
+
+            # Execute the command and capture output
+            result = subprocess.run(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+
+            # Check for errors
+            if result.returncode != 0:
+                raise RuntimeError(f"Query failed with error: {result.stderr.strip()}")
+
+            # Return the response
+            #print(f"Game query response: {result.stdout.strip()}")
+            return result.stdout.strip()
+
+        except Exception as e:
+            print(f"Error querying game status: {e}")
+            raise e
+
 
     ### Helpers
 

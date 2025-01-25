@@ -4,6 +4,81 @@
 
  pip install aiosqlite
  pip install watchdog
+ pip install fastapi
+ pip install uvicorn
+
+
+
 
 sudo apt install lsb-release
 sudo apt install screen
+sudo apt install curl
+
+
+
+
+
+
+
+for now to clean up saved games during dev cuz sudo
+sudo rm -rf /home/jtorkag/.dominions6/savedgames/*
+sudo rm -rf /home/jtorkag/dom_data_backup/*
+
+
+
+
+
+
+
+fix permissions once
+chmod +x fix_screen_permissions.sh
+sudo ./fix_screen_permissions.sh
+
+or
+
+sudo groupadd screen
+
+sudo chmod 775 /var/run/screen
+sudo chgrp screen /var/run/screen
+
+sudo usermod -aG screen $USER
+
+exit
+
+
+try relocating screen
+
+mkdir ~/.screen && chmod 700 ~/.screen
+and export the SCREENDIR to point to that directory:
+
+export SCREENDIR=$HOME/.screen
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+wsl workarounds
+
+sudo mkdir -p /mnt/uslg/runtime-dir
+sudo chmod 755 /mnt/uslg/runtime-dir
+
+export TMPDIR=/tmp
+
+if [ -e "/mnt/uslg/runtime-dir/" ]; then echo "Exists"; else echo "Does not exist"; fi
+
+TMPDIR=/tmp /home/jtorkag/dominions6/dom6_amd64 [remaining args]
