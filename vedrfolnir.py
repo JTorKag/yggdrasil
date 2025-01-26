@@ -1,6 +1,10 @@
 import aiosqlite
 import asyncio
 import random
+from typing import List, Dict
+import sqlite3
+
+
 
 class dbClient:
     _instance = None
@@ -15,6 +19,7 @@ class dbClient:
         """Connect to the database."""
         if self.connection is None:
             self.connection = await aiosqlite.connect(db_path)
+            self.connection.row_factory = sqlite3.Row
 
     async def close(self):
         """Close the database connection."""
@@ -63,24 +68,27 @@ class dbClient:
                     conqall BOOLEAN,
                     thrones TEXT,
                     requiredap INTEGER,
-                    cataclysm INTEGER,
+                    cataclysm INTSEGER,
                     game_running BOOLEAN,
-                    game_started BOOLEAN DEFAULT 0,  -- New column with a default value of 0
+                    game_started BOOLEAN DEFAULT 0,
                     channel_id TEXT,
+                    role_id TEXT,  -- Added here
                     game_active BOOLEAN NOT NULL,
                     process_pid INTEGER,
                     game_owner TEXT,
                     creation_date DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    game_winner TEXT DEFAULT NULL,
                     creation_version TEXT
                 )
                 """)
+
                 await cursor.execute("""
-                CREATE TABLE IF NOT EXISTS players (
+               CREATE TABLE IF NOT EXISTS players (
                     game_id INTEGER,
-                    player_id TEXT PRIMARY KEY,
+                    player_id TEXT,
                     nation TEXT,
-                    turn_status TEXT,
+                    extensions INTEGER,
+                    currently_claimed BOOLEAN DEFAULT FALSE,
+                    PRIMARY KEY (player_id, nation),
                     FOREIGN KEY (game_id) REFERENCES games (game_id)
                 )
                 """)
@@ -113,6 +121,7 @@ class dbClient:
         no_going_ai: str,
         thrones: str,
         requiredap: int,
+        role_id: int,
         creation_version: str,
         game_port: int = None,
         research_rate: int = None,
@@ -178,15 +187,15 @@ class dbClient:
             hall_of_fame, merc_slots, global_slots, indie_str, magicsites, eventrarity, richness,
             resources, recruitment, supplies, masterpass, startprov, renaming, scoregraphs, noartrest,
             nolvl9rest, teamgame, clustered, edgestart, story_events, ai_level, no_going_ai, conqall, thrones,
-            requiredap, cataclysm, game_running, channel_id, game_active, process_pid, game_owner,
-            creation_date, game_winner, creation_version, game_started
+            requiredap, cataclysm, game_running, channel_id, role_id, game_active, process_pid, game_owner,
+            creation_date, creation_version, game_started
         ) VALUES (
             :game_name, :game_port, :game_era, :game_map, :game_mods, :research_rate, :research_random,
             :hall_of_fame, :merc_slots, :global_slots, :indie_str, :magicsites, :eventrarity, :richness,
             :resources, :recruitment, :supplies, :masterpass, :startprov, :renaming, :scoregraphs, :noartrest,
             :nolvl9rest, :teamgame, :clustered, :edgestart, :story_events, :ai_level, :no_going_ai, :conqall, :thrones,
-            :requiredap, :cataclysm, :game_running, :channel_id, :game_active, :process_pid, :game_owner,
-            CURRENT_TIMESTAMP, NULL, :creation_version, :game_started
+            :requiredap, :cataclysm, :game_running, :channel_id, :role_id, :game_active, :process_pid, :game_owner,
+            CURRENT_TIMESTAMP, :creation_version, :game_started
         );
         '''
         params = {
@@ -225,12 +234,14 @@ class dbClient:
             "cataclysm": cataclysm,
             "game_running": game_running,
             "channel_id": channel_id,
+            "role_id": role_id,  # Add the role ID here
             "game_active": game_active,
             "process_pid": process_pid,
             "game_owner": game_owner,
             "creation_version": creation_version,
             "game_started": game_started
         }
+
 
         # Insert the new game into the database
         async with self.connection.cursor() as cursor:
@@ -363,22 +374,169 @@ class dbClient:
             await self.connection.commit()
             return cursor.lastrowid
 
-    async def add_player(self, game_id, player_id, nation, turn_status):
-        """Insert a new player into the players table."""
+    async def add_player(self, game_id, player_id, nation):
+        """Insert or update a player in the players table."""
         query = '''
-        INSERT INTO players (game_id, player_id, nation, turn_status)
-        VALUES (:game_id, :player_id, :nation, :turn_status);
+        INSERT INTO players (game_id, player_id, nation, extensions, currently_claimed)
+        VALUES (:game_id, :player_id, :nation, :extensions, :currently_claimed)
+        ON CONFLICT (player_id, nation) DO UPDATE SET currently_claimed = :currently_claimed;
         '''
         params = {
             "game_id": game_id,
             "player_id": player_id,
             "nation": nation,
-            "turn_status": turn_status
+            "extensions": 0,
+            "currently_claimed": True
+        }
+
+        try:
+            async with self.connection.cursor() as cursor:
+                await cursor.execute(query, params)
+                await self.connection.commit()
+            print(f"Player {player_id} successfully added to game {game_id} as nation {nation}.")
+        except Exception as e:
+            print(f"Failed to add player {player_id} to game {game_id}: {e}")
+            raise
+
+    async def unclaim_nation(self, game_id, player_id, nation):
+        """Unclaim a nation by setting currently_claimed to False."""
+        query = '''
+        UPDATE players
+        SET currently_claimed = FALSE
+        WHERE game_id = :game_id AND player_id = :player_id AND nation = :nation;
+        '''
+        params = {
+            "game_id": game_id,
+            "player_id": player_id,
+            "nation": nation
+        }
+
+        try:
+            async with self.connection.cursor() as cursor:
+                await cursor.execute(query, params)
+                await self.connection.commit()
+            print(f"Player {player_id} successfully unclaimed nation {nation} in game {game_id}.")
+        except Exception as e:
+            print(f"Failed to unclaim nation {nation} for player {player_id} in game {game_id}: {e}")
+            raise
+
+
+    async def get_claimed_nations_by_player(self, game_id: int, player_id: str) -> List[str]:
+        """Fetches the list of nations claimed by a player in a specific game."""
+        query = '''
+        SELECT nation FROM players
+        WHERE game_id = :game_id AND player_id = :player_id AND currently_claimed = 1;
+        '''
+        try:
+            async with self.connection.cursor() as cursor:
+                await cursor.execute(query, {"game_id": game_id, "player_id": player_id})
+                result = await cursor.fetchall()
+            # Fetch the first element of each tuple to extract nation
+            return [row[0] for row in result]
+        except Exception as e:
+            print(f"Failed to fetch claimed nations for player {player_id} in game {game_id}: {e}")
+            return []
+
+    
+    async def get_claimed_nations(self, game_id: int) -> Dict[str, List[str]]:
+        """Get all claimed nations and their associated player IDs for a game."""
+        query = '''
+        SELECT nation, player_id
+        FROM players
+        WHERE game_id = :game_id AND currently_claimed = 1
+        '''
+        params = {"game_id": game_id}
+        try:
+            async with self.connection.cursor() as cursor:
+                await cursor.execute(query, params)
+                rows = await cursor.fetchall()
+            # Construct a dictionary of nations to a list of player IDs
+            claimed_nations = {}
+            for row in rows:
+                nation, player_id = row  # Ensure row is unpacked correctly
+                if nation not in claimed_nations:
+                    claimed_nations[nation] = []
+                claimed_nations[nation].append(str(player_id))  # Cast player_id to string if needed
+            return claimed_nations
+        except Exception as e:
+            print(f"Error fetching claimed nations for game {game_id}: {e}")
+            return {}
+
+
+
+
+    async def get_claimed_nations_by_player(self, game_id: int, player_id: str) -> List[str]:
+        """
+        Fetches the list of nations claimed by a player in a specific game.
+
+        Args:
+            game_id (int): The ID of the game.
+            player_id (str): The ID of the player.
+
+        Returns:
+            List[str]: A list of nation names claimed by the player.
+        """
+        query = '''
+        SELECT nation
+        FROM players
+        WHERE game_id = :game_id AND player_id = :player_id AND currently_claimed = 1;
+        '''
+        params = {"game_id": game_id, "player_id": player_id}
+        try:
+            async with self.connection.cursor() as cursor:
+                await cursor.execute(query, params)
+                rows = await cursor.fetchall()
+            return [row[0] for row in rows]  # Assuming rows are tuples
+        except Exception as e:
+            print(f"Error fetching claimed nations for player {player_id} in game {game_id}: {e}")
+            return []
+
+
+
+
+
+    async def clear_players(self, game_id: int):
+        """Remove all player claims for a game."""
+        query = '''
+        DELETE FROM players
+        WHERE game_id = :game_id
+        '''
+        params = {"game_id": game_id}
+        async with self.connection.cursor() as cursor:
+            await cursor.execute(query, params)
+            await self.connection.commit()
+
+
+
+
+    async def check_player_nation(self, game_id: int, player_id: str, nation: str) -> bool:
+        """
+        Check if a specific player already owns a nation in the specified game.
+
+        Args:
+            game_id (int): The ID of the game.
+            player_id (str): The ID of the player.
+            nation (str): The name of the nation.
+
+        Returns:
+            bool: True if the player already owns the nation, False otherwise.
+        """
+        query = '''
+        SELECT 1 FROM players WHERE game_id = :game_id AND player_id = :player_id AND nation = :nation
+        LIMIT 1;
+        '''
+        params = {
+            "game_id": game_id,
+            "player_id": player_id,
+            "nation": nation
         }
 
         async with self.connection.cursor() as cursor:
             await cursor.execute(query, params)
-            await self.connection.commit()
+            result = await cursor.fetchone()
+            return result is not None
+
+
 
     async def get_active_game_channels(self):
         """Retrieve channel IDs for all active games."""
@@ -415,6 +573,7 @@ class dbClient:
             await cursor.execute(query, params)
             await self.connection.commit()
             print(f"Updated game_running to {status}")
+
 
     async def get_map(self, game_id):
         """Retrieve the map associated with a specific game."""

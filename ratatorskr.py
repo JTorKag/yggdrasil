@@ -9,30 +9,59 @@ import asyncio
 from bifrost import bifrost
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
+import os
 
-def require_bot_channel(bot):
+def require_bot_channel(config):
     """Decorator to restrict commands to bot-specific channels or channels linked to active games."""
-    async def predicate(interaction: discord.Interaction) -> bool:
-        # Combine active game channels with bot_channels
-        active_game_channels = await bot.db_instance.get_active_game_channels()
-        allowed_channels = set(active_game_channels + bot.bot_channels)
+    def decorator(command_func: Callable[..., Awaitable[None]]) -> Callable[..., Awaitable[None]]:
+        @wraps(command_func)
+        async def wrapper(interaction: discord.Interaction, *args, **kwargs):
+            bot = interaction.client  # Access the bot instance from the interaction
+            # Combine active game channels with bot_channels
+            active_game_channels = await bot.db_instance.get_active_game_channels()
+            allowed_channels = set(active_game_channels + list(map(int, config.get("bot_channels", []))))
 
-        # If allowed_channels is empty, allow any channel
-        if not allowed_channels or interaction.channel_id in allowed_channels:
-            return True
-
-        # Deny access if the channel is not allowed
-        await interaction.response.send_message("This command is not allowed in this channel.", ephemeral=True)
-        return False
-
-    def wrapper(command_func: Callable[..., Awaitable[None]]) -> Callable[..., Awaitable[None]]:
-        @wraps(command_func)  # Preserves original function metadata, including type annotations
-        async def wrapped(interaction: discord.Interaction, *args, **kwargs) -> None:
-            if await predicate(interaction):
+            # If allowed_channels is empty, allow any channel
+            if not allowed_channels or interaction.channel_id in allowed_channels:
                 return await command_func(interaction, *args, **kwargs)
-        return wrapped
 
-    return wrapper
+            # Deny access if the channel is not allowed
+            await interaction.response.send_message("This command is not allowed in this channel.", ephemeral=True)
+        return wrapper
+    return decorator
+
+
+
+def require_game_admin(config):
+    """Decorator to restrict commands to users with the game_admin role."""
+    def decorator(command_func: Callable[..., Awaitable[None]]) -> Callable[..., Awaitable[None]]:
+        @wraps(command_func)
+        async def wrapper(interaction: discord.Interaction, *args, **kwargs):
+            # Get the game admin role ID from the config
+            admin_role_id = int(config.get("game_admin"))
+            # Get the admin role from the guild
+            admin_role = discord.utils.get(interaction.guild.roles, id=admin_role_id)
+            
+            if not admin_role:
+                # If the role doesn't exist, send an error message
+                await interaction.response.send_message(
+                    "The game admin role is not configured or does not exist.", ephemeral=True
+                )
+                return
+
+            # Check if the user has the admin role
+            if admin_role in interaction.user.roles:
+                return await command_func(interaction, *args, **kwargs)
+
+            # Deny access if the user lacks the role
+            await interaction.response.send_message(
+                "You don't have the required permissions to use this command.", ephemeral=True
+            )
+        
+        return wrapper
+    return decorator
+
+
 
 
 def descriptive_time_breakdown(seconds: int) -> str:
@@ -61,10 +90,6 @@ def descriptive_time_breakdown(seconds: int) -> str:
 
     return ", ".join(parts) if parts else "0 seconds"
 
-
-
-
-
 def serverStatusJsonToDiscordFormatted(status_json):
     """Converts JSONifed discord information into formatted discord response"""
     # Start building the message
@@ -82,7 +107,7 @@ def serverStatusJsonToDiscordFormatted(status_json):
     players_info = "**Players:**\n"
     for player in status_json.get('players', []):
         players_info += (f"Player {player['player_id']}: {player['nation']} ({player['nation_desc']}) - "
-                         f"{player['status']}\n")
+                        f"{player['status']}\n")
         
         # Check if message exceeds 1024 characters
         if len(players_info) > 1024:
@@ -101,6 +126,7 @@ def serverStatusJsonToDiscordFormatted(status_json):
 
 
 
+
 class discordClient(discord.Client):
     def __init__(self, *, intents, db_instance, bot_ready_signal,config:dict, nidhogg):
         super().__init__(intents=intents)
@@ -112,7 +138,8 @@ class discordClient(discord.Client):
         self.bot_channels = list(map(int, config.get("bot_channels", [])))
         self.config = config
         self.nidhogg = nidhogg
-
+   
+    
     async def send_game_message(self, game_id: int, message: str):
         """
         Handles sending a message to the correct Discord channel based on the game ID.
@@ -149,7 +176,7 @@ class discordClient(discord.Client):
             description="Creates a brand new game",
             guild=discord.Object(id=self.guild_id)
         )
-        @require_bot_channel(self)
+        @require_bot_channel(self.config)
         async def new_game_command(
             interaction: discord.Interaction,
             game_name: str,
@@ -180,7 +207,7 @@ class discordClient(discord.Client):
                 event_rarity_map = {"Common": 1, "Rare": 2}
                 event_rarity_value = event_rarity_map[event_rarity]
 
-                disicples_map = {"False": 1, "True": 0}
+                disicples_map = {"False": 0, "True": 1}
                 disicples_value = disicples_map[disicples]
 
                 story_events_map = {"None": 0, "Some": 1, "Full": 2}
@@ -209,6 +236,16 @@ class discordClient(discord.Client):
                 new_channel = await guild.create_text_channel(name=game_name, category=category)
                 new_channel_id = new_channel.id
 
+
+                # Create a role for the game
+                role_name = f"{game_name} player"
+                guild = interaction.guild
+                role = discord.utils.get(guild.roles, name=role_name)
+
+                if not role:
+                    role = await guild.create_role(name=role_name)
+                    print(f"Role '{role_name}' created successfully.")
+
                 # Database operations
                 try:
                     new_game_id = await self.db_instance.create_game(
@@ -228,6 +265,7 @@ class discordClient(discord.Client):
                         game_started=False,
                         game_mods="[]",
                         channel_id=new_channel_id,
+                        role_id=role.id,  # Store the role ID
                         game_active=True,
                         process_pid=None,
                         game_owner=interaction.user.name,
@@ -383,7 +421,7 @@ class discordClient(discord.Client):
             description="Launches game lobby.",
             guild=discord.Object(id=self.guild_id)
         )
-        @require_bot_channel(self)
+        @require_bot_channel(self.config)
         async def launch_game_lobby(interaction: discord.Interaction):
             # Acknowledge interaction to prevent timeout
             await interaction.response.defer()  # Ensure the initial defer is also ephemeral
@@ -417,16 +455,10 @@ class discordClient(discord.Client):
             # Attempt to launch the game lobby
             success = await self.nidhogg.launch_game_lobby(game_id, self.db_instance)
             if success:
-                await interaction.followup.send(f"Game lobby launched for game ID: {game_id}.")
+                await interaction.followup.send(f"Game lobby launched for game {game_info['game_name']} ID: {game_id}.")
             else:
-                await interaction.followup.send(f"Failed to launch game lobby for game ID: {game_id}.")
+                await interaction.followup.send(f"Failed to launch game lobby for game {game_info['game_name']} ID: {game_id}.")
 
-            # Set game_running to true
-            try:
-                await self.db_instance.update_game_running(game_id, True)
-                print(f"Game: {game_info['game_name']} ID: {game_id} has been set to running.")
-            except Exception as e:
-                await interaction.followup.send(f"Failed to set game_running state in the database: {e}")
 
 
 
@@ -435,7 +467,7 @@ class discordClient(discord.Client):
             description="Starts a fresh game.",
             guild=discord.Object(id=self.guild_id)
         )
-        @require_bot_channel(self)
+        @require_bot_channel(self.config)
         async def start_game(interaction: discord.Interaction):
             # Acknowledge interaction to prevent timeout
             await interaction.response.defer()
@@ -496,7 +528,7 @@ class discordClient(discord.Client):
             description="Restarts the game back to the lobby state.",
             guild=discord.Object(id=self.guild_id)
         )
-        @require_bot_channel(self)
+        @require_bot_channel(self.config)
         async def restart_game_to_lobby(interaction: discord.Interaction):
             """Restarts the game associated with the current channel back to the lobby state."""
             # Acknowledge interaction to prevent timeout
@@ -515,7 +547,7 @@ class discordClient(discord.Client):
                 return
 
             # Check if the game has started
-            if game_info["game_started"]:
+            if not game_info["game_started"]:
                 await interaction.followup.send("The game has not been started. Cannot restart to lobby.", ephemeral=True)
                 return
 
@@ -553,13 +585,425 @@ class discordClient(discord.Client):
 
         
 
+        @self.tree.command(
+            name="claim",
+            description="Claim ownership of a nation.",
+            guild=discord.Object(id=self.guild_id)
+        )
+        @require_bot_channel(self.config)
+        async def claim(interaction: discord.Interaction, nation_name: str):
+            """Allows a user to claim a nation in the game."""
+            await interaction.response.defer(ephemeral=True)
+
+            # Get the game ID associated with the current channel
+            game_id = await self.db_instance.get_game_id_by_channel(interaction.channel_id)
+            if not game_id:
+                await interaction.followup.send("No game is associated with this channel.")
+                return
+
+            # Get game information
+            game_info = await self.db_instance.get_game_info(game_id)
+            if not game_info:
+                await interaction.followup.send("Game information not found in the database.")
+                return
+
+            # Get the 2h files and validate the claimed nation
+            try:
+                nation_files = await bifrost.get_2h_files_by_game_id(game_id, self.db_instance, self.config)
+                valid_nations = [os.path.splitext(os.path.basename(nation_file))[0] for nation_file in nation_files]
+
+                if nation_name not in valid_nations:
+                    await interaction.followup.send(f"{nation_name} is not a valid nation for this game.")
+                    return
+
+                # Check if the player already owns the nation
+                already_exists = await self.db_instance.check_player_nation(game_id, str(interaction.user.id), nation_name)
+                if already_exists:
+                    # Fetch the role
+                    guild = interaction.guild
+                    role_name = f"{game_info['game_name']} player"
+                    role = discord.utils.get(guild.roles, name=role_name)
+
+                    if not role:
+                        # Create the role if it doesn't exist
+                        role = await guild.create_role(name=role_name)
+                        print(f"\nRole '{role_name}' created successfully.")
+
+                    # Assign the role to the player if they don't already have it
+                    if role not in interaction.user.roles:
+                        await interaction.user.add_roles(role)
+                        print(f"Assigned role '{role_name}' to user {interaction.user.name}.")
+                        await interaction.followup.send(f"You already own {nation_name}, but the role '{role_name}' has been assigned to you.")
+                    else:
+                        await interaction.followup.send(f"You already own {nation_name} and have the role '{role_name}'.")
+
+                    return
+
+                # Add player to the database
+                try:
+                    await self.db_instance.add_player(game_id, str(interaction.user.id), nation_name)
+                    print(f"Added player {interaction.user.name} as {nation_name} in game {game_id}.")
+                except Exception as e:
+                    await interaction.followup.send(f"Failed to add you as {nation_name} in the database: {e}")
+                    return
+
+                # Create or fetch the role and assign it to the player
+                guild = interaction.guild
+                role_name = f"{game_info['game_name']} player"
+
+                role = discord.utils.get(guild.roles, name=role_name)
+                if not role:
+                    # Create the role
+                    role = await guild.create_role(name=role_name)
+                    print(f"Role '{role_name}' created successfully.")
+
+                # Assign the role to the player
+                await interaction.user.add_roles(role)
+                print(f"Assigned role '{role_name}' to user {interaction.user.name}.")
+
+                await interaction.followup.send(f"You have successfully claimed {nation_name} and have been assigned the role '{role_name}'.")
+            except Exception as e:
+                await interaction.followup.send(f"Failed to claim the nation: {e}")
+        @claim.autocomplete("nation_name")
+        async def autocomplete_nation(
+            interaction: discord.Interaction, current: str
+        ) -> List[discord.app_commands.Choice]:
+            """Autocomplete handler for the 'nation' argument."""
+            try:
+                # Get the game ID associated with the current channel
+                game_id = await self.db_instance.get_game_id_by_channel(interaction.channel_id)
+                if not game_id:
+                    return []
+
+                # Retrieve the list of `.2h` files for the game
+                files = await bifrost.get_2h_files_by_game_id(game_id, self.db_instance, self.config)
+                valid_nations = [os.path.basename(file).replace(".2h", "") for file in files]
+
+                # Filter the nations by the current input
+                filtered_nations = [nation for nation in valid_nations if current.lower() in nation.lower()]
+
+                # Return as autocomplete choices
+                return [discord.app_commands.Choice(name=nation, value=nation) for nation in filtered_nations]
+
+            except Exception as e:
+                print(f"Error in autocomplete for nations: {e}")
+                return []
+
+        @self.tree.command(
+            name="unclaim",
+            description="Unclaim a nation and remove your game role.",
+            guild=discord.Object(id=self.guild_id)
+        )
+        @require_bot_channel(self.config)
+        async def unclaim(interaction: discord.Interaction, nation_name: str):
+            """Allows a player to unclaim a nation."""
+            await interaction.response.defer()
+
+            # Get the game ID associated with the current channel
+            game_id = await self.db_instance.get_game_id_by_channel(interaction.channel_id)
+            if not game_id:
+                await interaction.followup.send("No game is associated with this channel.")
+                return
+
+            # Get game information
+            game_info = await self.db_instance.get_game_info(game_id)
+            if not game_info:
+                await interaction.followup.send("Game information not found in the database.", ephemeral=True)
+                return
+
+            game_name = game_info["game_name"]
+            role_name = f"{game_name} player"
+
+            # Check if the user has the role
+            guild = interaction.guild
+            if not guild:
+                await interaction.followup.send("Unable to fetch guild information.", ephemeral=True)
+                return
+
+            member = interaction.user
+            role = discord.utils.get(guild.roles, name=role_name)
+
+            if not role or role not in member.roles:
+                await interaction.followup.send(f"You do not have the role '{role_name}' to unclaim.", ephemeral=True)
+                return
+
+            # Remove the role from the user
+            try:
+                await member.remove_roles(role)
+                await self.db_instance.unclaim_nation(game_id, str(interaction.user.id), nation_name)
+                await interaction.followup.send(f"Role '{role_name}' has been removed from you, and nation '{nation_name}' has been unclaimed.", ephemeral=True)
+            except discord.Forbidden:
+                await interaction.followup.send("I don't have permission to remove this role.", ephemeral=True)
+            except Exception as e:
+                await interaction.followup.send(f"An error occurred while removing the role: {e}", ephemeral=True)
+
+        # Autocomplete for unclaim
+        @unclaim.autocomplete("nation_name")
+        async def unclaim_autocomplete(interaction: discord.Interaction, current: str) -> List[discord.app_commands.Choice]:
+            """Autocomplete handler for the 'nation_name' argument."""
+            try:
+                # Get the game ID associated with the current channel
+                game_id = await self.db_instance.get_game_id_by_channel(interaction.channel_id)
+                if not game_id:
+                    return []
+
+                # Fetch nations claimed by the user in the current game
+                claimed_nations = await self.db_instance.get_claimed_nations_by_player(game_id, str(interaction.user.id))
+                if not claimed_nations:
+                    return []
+
+                # Filter the nations based on the current input
+                filtered_nations = [nation for nation in claimed_nations if current.lower() in nation.lower()]
+
+                # Return the autocomplete choices
+                return [discord.app_commands.Choice(name=nation, value=nation) for nation in filtered_nations]
+
+            except Exception as e:
+                print(f"Error in unclaim autocomplete: {e}")
+                return []
+
+
+
+                
+        @self.tree.command(
+            name="pretenders",
+            description="Lists all submitted pretenders and shows who has claimed each nation.",
+            guild=discord.Object(id=self.guild_id)
+        )
+        @require_bot_channel(self.config)
+        async def pretenders(interaction: discord.Interaction):
+            """Lists all .2h files for a game and who has claimed each nation."""
+            await interaction.response.defer()
+
+            # Get the game ID associated with the current channel
+            game_id = await self.db_instance.get_game_id_by_channel(interaction.channel_id)
+            print(f"Retrieved game ID: {game_id}")  # Debugging log
+            if not game_id:
+                await interaction.followup.send("No game is associated with this channel.")
+                return
+
+            try:
+                print(f"Fetching pretenders for game ID: {game_id}")
+                
+                # Get the `.2h` files
+                nation_files = await bifrost.get_2h_files_by_game_id(game_id, self.db_instance, self.config)
+                valid_nations = [os.path.splitext(os.path.basename(nation_file))[0] for nation_file in nation_files]
+
+                # Get claimed nations
+                claimed_nations = await self.db_instance.get_claimed_nations(game_id)
+
+                # Build the response
+                embed = discord.Embed(title="Pretender Nations", color=discord.Color.blue())
+                #embed.add_field(name="Game ID", value=str(game_id), inline=False)
+
+                for nation in valid_nations:
+                    if nation in claimed_nations:
+                        claimants = claimed_nations[nation]
+                        resolved_claimants = []
+                        for player_id in claimants:
+                            user = interaction.guild.get_member(int(player_id)) or await interaction.client.fetch_user(int(player_id))
+                            if user:
+                                resolved_claimants.append(user.display_name)
+                            else:
+                                resolved_claimants.append(f"Unknown ({player_id})")  # Fallback if user not found
+
+                        player_names = ", ".join(resolved_claimants)
+                        embed.add_field(
+                            name=nation,
+                            value=f"Claimed by: {player_names}",
+                            inline=False
+                        )
+                    else:
+                        embed.add_field(
+                            name=nation,
+                            value="Unclaimed",
+                            inline=False
+                        )
+
+
+                await interaction.followup.send(embed=embed)
+
+            except Exception as e:
+                print(f"Error in pretenders command: {e}")
+                await interaction.followup.send(f"Failed to retrieve pretender information: {e}")
+
+
+
+        @self.tree.command(
+            name="clear-claims",
+            description="Clears all player claims and roles from the current game.",
+            guild=discord.Object(id=self.guild_id)
+        )
+        @require_bot_channel(self.config)
+        @require_game_admin(self.config)
+        async def clear_claims(interaction: discord.Interaction):
+            """Clears all claims and removes associated roles for the current game."""
+            await interaction.response.defer()
+
+            try:
+                # Get the game ID and validate
+                game_id = await self.db_instance.get_game_id_by_channel(interaction.channel_id)
+                if not game_id:
+                    await interaction.followup.send("No game is associated with this channel.")
+                    return
+
+                game_info = await self.db_instance.get_game_info(game_id)
+                if not game_info:
+                    await interaction.followup.send("Game information not found.")
+                    return
+
+                # Retrieve the role associated with the game
+                role_id = game_info.get("role_id")
+                role = discord.utils.get(interaction.guild.roles, id=int(role_id))
+                if not role:
+                    await interaction.followup.send("The associated role for this game does not exist.")
+                    return
+
+                # Fetch all players in the game
+                players = await self.db_instance.get_players_in_game(game_id)
+                if not players:
+                    await interaction.followup.send("No players are associated with this game.")
+                    return
+
+                removed_members = []
+                failed_members = []
+
+                for player in players:
+                    player_id = player["player_id"]
+                    try:
+                        # Retrieve the member from the guild
+                        member = interaction.guild.get_member(int(player_id)) or await interaction.guild.fetch_member(int(player_id))
+                        if not member:
+                            failed_members.append(player_id)
+                            continue
+
+                        # Remove the role if the member has it
+                        if role in member.roles:
+                            await member.remove_roles(role)
+                            removed_members.append(member.display_name)
+                    except Exception as e:
+                        print(f"Failed to remove role from player {player_id}: {e}")
+                        failed_members.append(player_id)
+
+                # Clear claims from the database
+                await self.db_instance.clear_players(game_id)
+
+                # Prepare response message
+                response = f"All claims for game '{game_info['game_name']}' have been cleared."
+                if removed_members:
+                    response += f"\nRoles removed from: {', '.join(removed_members)}."
+                if failed_members:
+                    response += f"\nFailed to process the following players: {', '.join(map(str, failed_members))}."
+
+                await interaction.followup.send(response)
+
+            except Exception as e:
+                print(f"Error in clear_claims: {e}")
+                await interaction.followup.send(f"An unexpected error occurred: {e}")
+
+
+
+
+
+        # @self.tree.command(
+        #     name="clear-claims",
+        #     description="Clears all player claims for the current game.",
+        #     guild=discord.Object(id=self.guild_id)
+        # )
+        # @require_bot_channel(self.config)
+        # @require_game_admin(self.config)
+        # async def clear_claims(interaction: discord.Interaction):
+        #     """Clears all claims for a game and removes associated roles."""
+        #     try:
+        #         print("[DEBUG] clear-claims command invoked")  # Initial debug log
+
+        #         # Defer response to prevent timeout
+        #         await interaction.response.defer(ephemeral=True)
+        #         print("[DEBUG] Interaction deferred")
+
+        #         # Get the game ID associated with the current channel
+        #         game_id = await self.db_instance.get_game_id_by_channel(interaction.channel_id)
+        #         if not game_id:
+        #             await interaction.followup.send("No game is associated with this channel.")
+        #             print("[DEBUG] No game ID found for the channel")
+        #             return
+        #         print(f"[DEBUG] Retrieved game ID: {game_id}")
+
+        #         # Get the associated role and game information
+        #         game_info = await self.db_instance.get_game_info(game_id)
+        #         if not game_info:
+        #             await interaction.followup.send("Game information not found in the database.", ephemeral=True)
+        #             print("[DEBUG] Game information not found in the database")
+        #             return
+        #         print(f"[DEBUG] Retrieved game information: {game_info}")
+
+        #         role_id = game_info.get("role_id")
+        #         if not role_id:
+        #             await interaction.followup.send("No role is associated with this game.", ephemeral=True)
+        #             print("[DEBUG] No role ID found for the game")
+        #             return
+        #         print(f"[DEBUG] Retrieved role ID: {role_id}")
+
+        #         # Get guild and role information
+        #         guild = interaction.guild
+        #         if not guild:
+        #             await interaction.followup.send("Unable to fetch guild information.", ephemeral=True)
+        #             print("[DEBUG] Guild information not found")
+        #             return
+
+        #         role = discord.utils.get(guild.roles, id=int(role_id))
+        #         if not role:
+        #             await interaction.followup.send("The associated role does not exist.", ephemeral=True)
+        #             print("[DEBUG] Role not found in the guild")
+        #             return
+        #         print(f"[DEBUG] Role found: {role.name}")
+
+        #         # Fetch all players for the game
+        #         players = await self.db_instance.get_players_by_game(game_id)
+        #         if not players:
+        #             await interaction.followup.send("No players found for this game.", ephemeral=True)
+        #             print("[DEBUG] No players found for the game")
+        #             return
+        #         print(f"[DEBUG] Found {len(players)} players for the game")
+
+        #         # Remove the role from all members with it
+        #         for player in players:
+        #             player_id = player["player_id"]
+        #             member = guild.get_member(int(player_id))
+        #             if member and role in member.roles:
+        #                 try:
+        #                     await member.remove_roles(role)
+        #                     print(f"[DEBUG] Removed role from member: {member.name}")
+        #                 except Exception as e:
+        #                     print(f"[DEBUG] Failed to remove role from member {member.name}: {e}")
+
+        #         # Clear claims from the database
+        #         await self.db_instance.clear_players(game_id)
+        #         print("[DEBUG] Cleared all player claims from the database")
+
+        #         # Respond to the interaction
+        #         await interaction.followup.send(f"All claims for game '{game_info['game_name']}' have been cleared.")
+        #         print("[DEBUG] Interaction response sent")
+
+        #     except Exception as e:
+        #         # Handle unexpected exceptions
+        #         print(f"[DEBUG] Error in clear-claims command: {e}")
+        #         await interaction.followup.send(f"Failed to clear claims: {e}")
+
+
+
+
+
+
+
+
 
         @self.tree.command(
             name="undone",
             description="Returns current turn status",
             guild=discord.Object(id=self.guild_id)
         )
-        @require_bot_channel(self)
+        @require_bot_channel(self.config)
         async def undone_check(interaction: discord.Interaction):
             """Returns current turn info"""
 
@@ -587,6 +1031,8 @@ class discordClient(discord.Client):
                 turn = lines[4].split(":")[1].strip()
                 #time_left = lines[5].split(":")[1].strip()
                 time_left = timer_table["remaining_time"]
+                if time_left is None:
+                    raise ValueError("time_left cannot be None")
 
                 #caluclate turn date
 
@@ -669,7 +1115,7 @@ class discordClient(discord.Client):
             description="Forces the game to start hosting immediately.",
             guild=discord.Object(id=self.guild_id)
         )
-        @require_bot_channel(self)
+        @require_bot_channel(self.config)
         async def force_host(interaction: discord.Interaction):
             """Forces the game associated with the current channel to start hosting."""
             # Acknowledge interaction to prevent timeout
@@ -709,7 +1155,7 @@ class discordClient(discord.Client):
             description="Kills the game lobby process.",
             guild=discord.Object(id=self.guild_id)
         )
-        @require_bot_channel(self)
+        @require_bot_channel(self.config)
         async def kill_game_lobby(interaction: discord.Interaction):
             # Acknowledge interaction to prevent timeout
             await interaction.response.defer(ephemeral=True)
@@ -765,7 +1211,7 @@ class discordClient(discord.Client):
             description="Checks server status",
             guild=discord.Object(id=self.guild_id) 
         )
-        @require_bot_channel(self)
+        @require_bot_channel(self.config)
         async def wake_command(interaction: discord.Interaction):
             response = serverStatusJsonToDiscordFormatted(self.nidhogg.getServerStatus())
             embedResponse = discord.Embed(title="Server Status", type="rich")
@@ -778,7 +1224,7 @@ class discordClient(discord.Client):
             description="Echos back text",
             guild=discord.Object(id=self.guild_id)
         )
-        @require_bot_channel(self)
+        @require_bot_channel(self.config)
         async def echo_command(interaction: discord.Interaction, echo_text:str, your_name:str):
             await interaction.response.send_message(echo_text + your_name)
 
@@ -787,7 +1233,7 @@ class discordClient(discord.Client):
             description="Upload your map.",
             guild=discord.Object(id=self.guild_id)
         )
-        @require_bot_channel(self)
+        @require_bot_channel(self.config)
         async def map_upload_command(interaction: discord.Interaction, file: discord.Attachment):
             try:
                 # Read the file data as a binary blob
@@ -815,7 +1261,7 @@ class discordClient(discord.Client):
             description="Upload your mod.",
             guild=discord.Object(id=self.guild_id)
         )
-        @require_bot_channel(self)
+        @require_bot_channel(self.config)
         async def mod_upload_command(interaction: discord.Interaction, file: discord.Attachment):
             try:
                 # Read the file data as a binary blob
@@ -940,7 +1386,7 @@ class discordClient(discord.Client):
             description="Select mods for game.",
             guild=discord.Object(id=self.guild_id),
         )
-        @require_bot_channel(self)
+        @require_bot_channel(self.config)
         async def select_mods_dropdown(interaction: discord.Interaction):
 
             # Get the current game ID associated with the channel
@@ -972,7 +1418,7 @@ class discordClient(discord.Client):
             description="Select map for game.",
             guild=discord.Object(id=self.guild_id),
         )
-        @require_bot_channel(self)
+        @require_bot_channel(self.config)
         async def select_map_dropdown(interaction: discord.Interaction):
 
             # Get the current game ID associated with the channel
@@ -1013,7 +1459,7 @@ class discordClient(discord.Client):
             description="Lists all active games.",
             guild=discord.Object(id=self.guild_id)  # Replace with your actual guild ID
         )
-        @require_bot_channel(self)
+        @require_bot_channel(self.config)
         async def list_active_games(interaction: discord.Interaction):
             await interaction.response.defer(ephemeral=True)  # Acknowledge the interaction
 
@@ -1045,7 +1491,7 @@ class discordClient(discord.Client):
             description="Test the generic dropdown menu.",
             guild=discord.Object(id=self.guild_id)
         )
-        @require_bot_channel(self)
+        @require_bot_channel(self.config)
         async def dropdown_test_command(interaction: discord.Interaction):
 
             options = [{'name': 'smackdown_ea1', 'location': 'smackdown_ea1/smackdown_ea1.map','yggemoji': 'DreamAtlas:', 'yggdescr': '"for winners only'},

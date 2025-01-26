@@ -8,7 +8,7 @@ import threading
 import asyncio
 from bifrost import bifrost
 import signal
-import shlex 
+import shlex
 
 class nidhogg:
     # Load configuration and set Dominions folder path
@@ -111,7 +111,7 @@ class nidhogg:
                 command.append(story_events_map[story_events])
 
             # Add logic for no_going_ai
-            if no_going_ai == 0:
+            if no_going_ai == 1:
                 command.append("--nonewai")
 
             # Add logic for research random
@@ -126,7 +126,7 @@ class nidhogg:
                 command.extend(["--mapfile", game_map])
 
             # Add team game logic
-            if teamgame == 0:
+            if teamgame == True:
                 command.append("--teamgame")
             
             command.append("--statfile")
@@ -168,7 +168,7 @@ class nidhogg:
 
                 # Update the database with the correct PID
                 await db_instance.update_process_pid(game_id, actual_pid)
-                await db_instance.update_game_running(game_id, 1)
+                await db_instance.update_game_running(game_id, True)
 
                 return True
 
@@ -225,7 +225,7 @@ class nidhogg:
             print(f"Process with PID {process_pid} for game ID {game_id} has been killed.")
 
             # Update the database to reflect the game is no longer running
-            await db_instance.update_game_running(game_id, 0)
+            await db_instance.update_game_running(game_id, False)
         except ProcessLookupError:
             raise ValueError(f"Process with PID {process_pid} not found.")
         except Exception as e:
@@ -313,6 +313,7 @@ class nidhogg:
         except Exception as e:
             print(f"Error querying game status: {e}")
             raise e
+
 
 
     ### Helpers
