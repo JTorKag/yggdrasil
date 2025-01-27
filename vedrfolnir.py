@@ -299,13 +299,14 @@ class dbClient:
         Fetch all games with active timers (timer_running = true).
         """
         query = """
-        SELECT game_id, remaining_time, timer_length, timer_default
+        SELECT game_id, remaining_time, timer_default
         FROM gameTimers
         WHERE timer_running = true
         """
         async with self.connection.cursor() as cursor:
             await cursor.execute(query)
             return await cursor.fetchall()
+
 
     async def update_timer(self, game_id, remaining_time, timer_running):
         """
@@ -401,7 +402,7 @@ class dbClient:
             dict: A dictionary containing the timer details (or None if not found).
         """
         query = """
-        SELECT game_id, timer_default, timer_length, timer_running, remaining_time
+        SELECT game_id, timer_default, timer_running, remaining_time
         FROM gameTimers
         WHERE game_id = :game_id
         """
@@ -418,6 +419,7 @@ class dbClient:
         except Exception as e:
             print(f"Error retrieving timer for game ID {game_id}: {e}")
             return None
+
 
 
 
