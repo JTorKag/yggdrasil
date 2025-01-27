@@ -86,7 +86,8 @@ class nidhogg:
                 "--renaming",
                 "--noclientstart",
                 "--preexec", preexec_command,
-                "--postexec", postexec_command,  # Insert properly quoted postexec command
+                "--postexec", postexec_command,
+                "--textonly"
             ]
 
             # Add thrones
