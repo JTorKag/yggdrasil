@@ -47,7 +47,10 @@ Install the required system packages using `apt`:
 sudo apt install lsb-release
 sudo apt install screen
 sudo apt install curl
+sudo apt install libglu1-mesa
+sudo apt install libsdl2-2.0-0
 ```
+The last two are dominions required even in headless mode. 
 
 ---
 
@@ -67,6 +70,7 @@ sudo apt install curl
 
 3. Configure the application:
    - Create a configuration file (e.g., `config.json`).
+   - Use absolute folder paths.
    - Add required details such as:
      - Discord Bot Token
      - Guild ID
