@@ -417,7 +417,6 @@ class discordClient(discord.Client):
                     await self.db_instance.create_timer(
                         game_id=new_game_id,
                         timer_default=86400,  # 24 hours default
-                        timer_length=86400,  # 24 hours current length
                         timer_running=False,  # Not running initially
                         remaining_time=86400  # Full remaining time initially
                     )
