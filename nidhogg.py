@@ -34,28 +34,6 @@ class nidhogg:
         except Exception as e:
             print(f"Error setting executable permission for {file_path}: {e}")
 
-    @staticmethod
-    def get_server_status():
-        """
-        Fetch the server status using the Dominions binary.
-
-        Returns:
-            dict: Parsed JSON status from the Dominions server.
-        """
-        try:
-            status_result = subprocess.run(
-                [str(nidhogg.dominions_folder / "dom6_amd64"), "-T", "--tcpquery", "--ipadr", "45.79.83.4", "--port", "6006"],
-                stdout=subprocess.PIPE,
-                text=True,
-                stderr=subprocess.DEVNULL
-            )
-            return nidhogg.dominions_to_json(status_result.stdout)
-        except Exception as e:
-            print(f"Error fetching server status: {e}")
-            return {}
-
-
-
 
     @staticmethod
     async def launch_game_lobby(game_id, db_instance):
@@ -74,17 +52,26 @@ class nidhogg:
             eventrarity = game_details["eventrarity"]
             masterpass = game_details["masterpass"]
             requiredap = game_details["requiredap"]
-            research_random = game_details["research_random"]
-            global_slots = game_details["global_slots"]
-            eventrarity = game_details["eventrarity"]
-            masterpass = game_details["masterpass"]
-            teamgame = game_details["teamgame"]
+            thrones = game_details["thrones"]
             story_events = game_details["story_events"]
             no_going_ai = game_details["no_going_ai"]
-            requiredap = game_details["requiredap"]
-            thrones = game_details["thrones"]
+            research_random = game_details["research_random"]
+            teamgame = game_details["teamgame"]
 
-            # Construct the command
+            # Properly construct the --postexec command
+            postexec_command = (
+                f"curl -X POST \"http://127.0.0.1:8000/postexec_notify?game_id={game_id}\" "
+                f"-H 'Content-Type: application/x-www-form-urlencoded'"
+            )
+
+            preexec_command = (
+                f"curl -X POST \"http://127.0.0.1:8000/preexec_backup?game_id={game_id}\" "
+                f"-H 'Content-Type: application/x-www-form-urlencoded'"
+            )
+
+
+
+            # Build the base command
             command = [
                 str(nidhogg.dominions_folder / "dom6_amd64"),
                 "--tcpserver",
@@ -98,39 +85,38 @@ class nidhogg:
                 "--requiredap", str(requiredap),
                 "--renaming",
                 "--noclientstart",
-                #"--textonly"
+                "--preexec", preexec_command,
+                "--postexec", postexec_command,  # Insert properly quoted postexec command
             ]
 
-            # Add thrones logic
+            # Add thrones
             throne_counts = thrones.split(",")
             command.extend(["--thrones"] + throne_counts)
 
-
+            # Add story events logic
             story_events_map = {0: "--nostoryevents", 1: "--storyevents", 2: "--allstoryevents"}
             if story_events in story_events_map:
                 command.append(story_events_map[story_events])
 
-            # Add logic for no_going_ai
+            # Add AI behavior
             if no_going_ai == 1:
                 command.append("--nonewai")
 
-            # Add logic for research random
-            if research_random == 1:  # Even Spread
+            # Add research randomness
+            if research_random == 1:
                 command.append("--norandres")
 
             # Add map logic
-            vanilla_map_sizes = {"vanilla_10": "10", "vanilla_15": "15", "vanilla_20": "20", "vanilla_25": "25"}
-            if game_map in vanilla_map_sizes:
-                command.extend(["--randmap", vanilla_map_sizes[game_map]])
+            if game_map in {"vanilla_10", "vanilla_15", "vanilla_20", "vanilla_25"}:
+                command.extend(["--randmap", game_map.split("_")[1]])
             else:
                 command.extend(["--mapfile", game_map])
 
             # Add team game logic
-            if teamgame == True:
+            if teamgame:
                 command.append("--teamgame")
-            
+
             command.append("--statfile")
-            command.append("--statuspage")
 
             # Prepare the screen command
             screen_name = f"dom_{game_id}"
@@ -144,19 +130,17 @@ class nidhogg:
                 stdin=subprocess.DEVNULL,
             )
             print(f"Screen process launched with PID: {screen_process.pid}")
-            print({shlex.join(screen_command)})
+            #print(" ".join(screen_command))  # Debug output to verify command
 
             # Wait for the `dom6_amd64` process to start
             await asyncio.sleep(1)
 
-            # Retrieve the PID of the `dom6_amd64` process from the screen session
+            # Retrieve the PID of the `dom6_amd64` process
             try:
                 result = subprocess.check_output(["screen", "-ls", screen_name]).decode("utf-8")
-                # Extract the process PID from the session details
                 actual_pid = None
                 for line in result.splitlines():
                     if f"{screen_name}" in line:
-                        # Screen lines contain the PID at the start
                         actual_pid = int(line.split(".")[0].strip())
                         break
 
@@ -179,6 +163,8 @@ class nidhogg:
         except Exception as e:
             print(f"Error launching game lobby: {e}")
             return False
+
+
 
 
     @staticmethod
@@ -292,7 +278,7 @@ class nidhogg:
                 "--port", str(game_port)
             ]
 
-            print({shlex.join(command)})
+            #print({shlex.join(command)})
 
             # Execute the command and capture output
             result = subprocess.run(
@@ -317,42 +303,3 @@ class nidhogg:
 
 
     ### Helpers
-
-    @staticmethod
-    def dominions_to_json(log_string):
-        """
-        Parse the Dominions server log into JSON.
-
-        Args:
-            log_string (str): Raw log string from the server.
-
-        Returns:
-            dict: Parsed JSON object with game and player details.
-        """
-        dom_status_json = {}
-        
-        # Extract the general game info
-        game_info_pattern = re.compile(r"Gamename:\s*(\S+)\nStatus:\s*(.+?)\nTurn:\s*(\d+)\nTime left:\s*(\d+ ms)")
-        game_info_match = game_info_pattern.search(log_string)
-        
-        if game_info_match:
-            dom_status_json['game_name'] = game_info_match.group(1)
-            dom_status_json['status'] = game_info_match.group(2).strip()
-            dom_status_json['turn'] = int(game_info_match.group(3))
-            dom_status_json['time_left'] = game_info_match.group(4).strip()
-        
-        # Extract player info
-        players = []
-        player_info_pattern = re.compile(r"player (\d+): ([^,]+), ([^()]+) \(([^)]+)\)")
-        for match in player_info_pattern.finditer(log_string):
-            player = {
-                "player_id": int(match.group(1)),
-                "nation": match.group(2).strip(),
-                "nation_desc": match.group(3).strip(),
-                "status": match.group(4).strip()
-            }
-            players.append(player)
-        
-        dom_status_json['players'] = players
-        
-        return dom_status_json

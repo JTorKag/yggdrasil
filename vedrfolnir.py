@@ -72,17 +72,26 @@ class dbClient:
                     game_running BOOLEAN,
                     game_started BOOLEAN DEFAULT 0,
                     channel_id TEXT,
-                    role_id TEXT,  -- Added here
+                    role_id TEXT,
                     game_active BOOLEAN NOT NULL,
                     process_pid INTEGER,
                     game_owner TEXT,
                     creation_date DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    creation_version TEXT
+                    creation_version TEXT,
+                    game_type TEXT,
+                    game_winner INTEGER
                 )
                 """)
-
                 await cursor.execute("""
-               CREATE TABLE IF NOT EXISTS players (
+                PRAGMA table_info(games)
+                """)
+                columns = [row[1] for row in await cursor.fetchall()]
+                if "game_winner" not in columns:
+                    await cursor.execute("ALTER TABLE games ADD COLUMN game_winner INTEGER DEFAULT NULL;")
+
+                # Create the `players` table
+                await cursor.execute("""
+                CREATE TABLE IF NOT EXISTS players (
                     game_id INTEGER,
                     player_id TEXT,
                     nation TEXT,
@@ -92,11 +101,11 @@ class dbClient:
                     FOREIGN KEY (game_id) REFERENCES games (game_id)
                 )
                 """)
+                # Create the `gameTimers` table
                 await cursor.execute("""
                 CREATE TABLE IF NOT EXISTS gameTimers (
                     game_id INTEGER PRIMARY KEY,
                     timer_default INTEGER NOT NULL,
-                    timer_length INTEGER NOT NULL,
                     timer_running BOOLEAN,
                     remaining_time INTEGER,
                     FOREIGN KEY (game_id) REFERENCES games (game_id)
@@ -123,6 +132,8 @@ class dbClient:
         requiredap: int,
         role_id: int,
         creation_version: str,
+        game_type: str,
+        max_active_games: int,
         game_port: int = None,
         research_rate: int = None,
         hall_of_fame: int = None,
@@ -151,8 +162,8 @@ class dbClient:
         game_started: bool = False,
         process_pid: int = None,
         game_owner: str = None,
-        max_active_games: int = 8  # Predefined limit for active games
-    ):
+        game_winner: int = None,
+        ):
         """Insert a new game into the games table, with a limit on active games."""
 
         # Check if the game name contains spaces
@@ -188,14 +199,14 @@ class dbClient:
             resources, recruitment, supplies, masterpass, startprov, renaming, scoregraphs, noartrest,
             nolvl9rest, teamgame, clustered, edgestart, story_events, ai_level, no_going_ai, conqall, thrones,
             requiredap, cataclysm, game_running, channel_id, role_id, game_active, process_pid, game_owner,
-            creation_date, creation_version, game_started
+            creation_date, creation_version, game_started, game_type, game_winner
         ) VALUES (
             :game_name, :game_port, :game_era, :game_map, :game_mods, :research_rate, :research_random,
             :hall_of_fame, :merc_slots, :global_slots, :indie_str, :magicsites, :eventrarity, :richness,
             :resources, :recruitment, :supplies, :masterpass, :startprov, :renaming, :scoregraphs, :noartrest,
             :nolvl9rest, :teamgame, :clustered, :edgestart, :story_events, :ai_level, :no_going_ai, :conqall, :thrones,
             :requiredap, :cataclysm, :game_running, :channel_id, :role_id, :game_active, :process_pid, :game_owner,
-            CURRENT_TIMESTAMP, :creation_version, :game_started
+            CURRENT_TIMESTAMP, :creation_version, :game_started, :game_type, :game_winner
         );
         '''
         params = {
@@ -232,15 +243,18 @@ class dbClient:
             "thrones": thrones,
             "requiredap": requiredap,
             "cataclysm": cataclysm,
+            "game_type": game_type,
             "game_running": game_running,
             "channel_id": channel_id,
-            "role_id": role_id,  # Add the role ID here
+            "role_id": role_id,
             "game_active": game_active,
             "process_pid": process_pid,
             "game_owner": game_owner,
             "creation_version": creation_version,
-            "game_started": game_started
+            "game_started": game_started,
+            "game_winner": game_winner  # Include game_winner here
         }
+
 
 
         # Insert the new game into the database
@@ -250,7 +264,83 @@ class dbClient:
             return cursor.lastrowid
 
 
+    async def update_game_property(self, game_id: int, property_name: str, new_value: str | int):
+        """
+        Updates a specific property for a game in the database.
 
+        Args:
+            game_id (int): The ID of the game to update.
+            property_name (str): The property to update.
+            new_value (str | int): The new value for the property.
+
+        Returns:
+            bool: True if the update was successful, False otherwise.
+        """
+        query = f"""
+        UPDATE games
+        SET {property_name} = :new_value
+        WHERE game_id = :game_id
+        """
+        params = {"new_value": new_value, "game_id": game_id}
+
+        try:
+            async with self.connection.cursor() as cursor:
+                await cursor.execute(query, params)
+                await self.connection.commit()
+                print(f"Updated {property_name} to {new_value} for game ID {game_id}")
+                return True
+        except Exception as e:
+            print(f"Error updating {property_name} for game ID {game_id}: {e}")
+            return False
+
+
+    async def get_active_timers(self):
+        """
+        Fetch all games with active timers (timer_running = true).
+        """
+        query = """
+        SELECT game_id, remaining_time, timer_length, timer_default
+        FROM gameTimers
+        WHERE timer_running = true
+        """
+        async with self.connection.cursor() as cursor:
+            await cursor.execute(query)
+            return await cursor.fetchall()
+
+    async def update_timer(self, game_id, remaining_time, timer_running):
+        """
+        Update the remaining time and running status of a timer.
+        """
+        query = """
+        UPDATE gameTimers
+        SET remaining_time = :remaining_time,
+            timer_running = :timer_running
+        WHERE game_id = :game_id
+        """
+        params = {
+            "remaining_time": remaining_time,
+            "timer_running": timer_running,
+            "game_id": game_id,
+        }
+        async with self.connection.cursor() as cursor:
+            await cursor.execute(query, params)
+            await self.connection.commit()
+
+    async def reset_timer_for_new_turn(self, game_id: int):
+        """
+        Reset the timer for a new turn:
+        - Set remaining_time to timer_default.
+        - Restart the timer.
+        """
+        query = """
+        UPDATE gameTimers
+        SET remaining_time = timer_default,
+            timer_running = true
+        WHERE game_id = :game_id
+        """
+        async with self.connection.cursor() as cursor:
+            await cursor.execute(query, {"game_id": game_id})
+            await self.connection.commit()
 
 
     async def get_active_games(self):
@@ -354,17 +444,35 @@ class dbClient:
             await self.connection.commit()
             print(f"Game ID {game_id} game_started set to {started}.")
 
+    async def set_timer_running(self, game_id: int, running: bool):
+        """
+        Sets the timer_running value for a specific game ID.
+        """
+        query = """
+        UPDATE gameTimers
+        SET timer_running = :running
+        WHERE game_id = :game_id
+        """
+        params = {"running": int(running), "game_id": game_id}
+        try:
+            async with self.connection.cursor() as cursor:
+                await cursor.execute(query, params)
+                await self.connection.commit()
+        except Exception as e:
+            print(f"[ERROR] Failed to set timer_running for game ID {game_id}: {e}")
 
 
-    async def create_timer(self, game_id, timer_default, timer_length, timer_running, remaining_time):
+    async def create_timer(self, game_id: int, timer_default: int, timer_running: bool, remaining_time: int):
+        """
+        Create a timer entry in the database.
+        """
         query = '''
-        INSERT INTO gameTimers (game_id, timer_default, timer_length, timer_running, remaining_time)
-        VALUES (:game_id, :timer_default, :timer_length, :timer_running, :remaining_time);
+        INSERT INTO gameTimers (game_id, timer_default, timer_running, remaining_time)
+        VALUES (:game_id, :timer_default, :timer_running, :remaining_time)
         '''
         params = {
             "game_id": game_id,
             "timer_default": timer_default,
-            "timer_length": timer_length,
             "timer_running": timer_running,
             "remaining_time": remaining_time
         }
@@ -373,6 +481,7 @@ class dbClient:
             await cursor.execute(query, params)
             await self.connection.commit()
             return cursor.lastrowid
+
 
     async def add_player(self, game_id, player_id, nation):
         """Insert or update a player in the players table."""
@@ -420,51 +529,6 @@ class dbClient:
             print(f"Failed to unclaim nation {nation} for player {player_id} in game {game_id}: {e}")
             raise
 
-
-    async def get_claimed_nations_by_player(self, game_id: int, player_id: str) -> List[str]:
-        """Fetches the list of nations claimed by a player in a specific game."""
-        query = '''
-        SELECT nation FROM players
-        WHERE game_id = :game_id AND player_id = :player_id AND currently_claimed = 1;
-        '''
-        try:
-            async with self.connection.cursor() as cursor:
-                await cursor.execute(query, {"game_id": game_id, "player_id": player_id})
-                result = await cursor.fetchall()
-            # Fetch the first element of each tuple to extract nation
-            return [row[0] for row in result]
-        except Exception as e:
-            print(f"Failed to fetch claimed nations for player {player_id} in game {game_id}: {e}")
-            return []
-
-    
-    async def get_claimed_nations(self, game_id: int) -> Dict[str, List[str]]:
-        """Get all claimed nations and their associated player IDs for a game."""
-        query = '''
-        SELECT nation, player_id
-        FROM players
-        WHERE game_id = :game_id AND currently_claimed = 1
-        '''
-        params = {"game_id": game_id}
-        try:
-            async with self.connection.cursor() as cursor:
-                await cursor.execute(query, params)
-                rows = await cursor.fetchall()
-            # Construct a dictionary of nations to a list of player IDs
-            claimed_nations = {}
-            for row in rows:
-                nation, player_id = row  # Ensure row is unpacked correctly
-                if nation not in claimed_nations:
-                    claimed_nations[nation] = []
-                claimed_nations[nation].append(str(player_id))  # Cast player_id to string if needed
-            return claimed_nations
-        except Exception as e:
-            print(f"Error fetching claimed nations for game {game_id}: {e}")
-            return {}
-
-
-
-
     async def get_claimed_nations_by_player(self, game_id: int, player_id: str) -> List[str]:
         """
         Fetches the list of nations claimed by a player in a specific game.
@@ -490,6 +554,41 @@ class dbClient:
         except Exception as e:
             print(f"Error fetching claimed nations for player {player_id} in game {game_id}: {e}")
             return []
+
+
+    async def get_claimed_nations(self, game_id: int) -> Dict[str, List[str]]:
+        """
+        Fetches all claimed nations and their associated player IDs for a specific game.
+
+        Args:
+            game_id (int): The ID of the game.
+
+        Returns:
+            Dict[str, List[str]]: A dictionary mapping each claimed nation to a list of player IDs.
+        """
+        query = '''
+        SELECT nation, player_id
+        FROM players
+        WHERE game_id = :game_id AND currently_claimed = 1
+        '''
+        params = {"game_id": game_id}
+        try:
+            async with self.connection.cursor() as cursor:
+                await cursor.execute(query, params)
+                rows = await cursor.fetchall()
+            
+            # Construct a dictionary: {nation: [player_id1, player_id2, ...]}
+            claimed_nations = {}
+            for nation, player_id in rows:
+                if nation not in claimed_nations:
+                    claimed_nations[nation] = []
+                claimed_nations[nation].append(player_id)
+
+            return claimed_nations
+        except Exception as e:
+            print(f"Error fetching claimed nations for game {game_id}: {e}")
+            return {}
+
 
 
 
@@ -659,7 +758,7 @@ class dbClient:
         used_ports = await self.get_used_ports()
 
         while True:
-            random_port = random.randint(49152, 65535)
+            random_port = random.randint(49152, 55555)
             if random_port not in used_ports:
                 return random_port
 

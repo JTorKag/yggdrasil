@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 from gjallarhorn import APIHandler
 import os
+from norns import TimerManager
 
 def create_config():
     """Loads the configuration."""
@@ -64,20 +65,34 @@ async def handle_terminal_input(db_instance, bot_ready_signal, shutdown_signal):
         except EOFError:
             break
 
-async def shutdown(discordBot, db_instance, observer, shutdown_signal):
+async def shutdown(discordBot, db_instance, observer, shutdown_signal, timer_manager=None):
     """Handles graceful shutdown of services."""
     print("\nShutting down gracefully.")
+    
+    # Stop the timer manager if it exists
+    if timer_manager:
+        await timer_manager.stop_timers()
+        print("\nTimerManager stopped.")
+    
+    # Close the database connection
     await db_instance.close()
     print("\nDB connection closed.")
+    
+    # Shut down the Discord bot
     if discordBot.is_ready():
         await discordBot.close()
         print("\nBot stopped.")
+    
+    # Stop the observer if it exists
     if observer:
         observer.stop()
         print("\nStopped monitoring dom_data_folder.")
         observer.join()
+    
+    # Set the shutdown signal
     shutdown_signal.set()
     print("\nGoodbye.")
+
 
 
 def is_wsl():
@@ -96,53 +111,69 @@ async def main():
     """Main entry point for the application."""
     config = create_config()
 
-    #only needed for wsl. remove in practice. 
+    # Only needed for WSL. Remove in production.
     if is_wsl():
         os.environ["DOM6_CONF"] = "/home/jtorkag/.dominions6"
         print(f"DOM6_CONF set to: {os.environ['DOM6_CONF']}")
-    
-
 
     # Set up necessary permissions and configurations
     bifrost.set_executable_permission(Path(config.get("dominions_folder")) / "dom6_amd64")
     observer = bifrost.initialize_dom_data_folder(config)
 
-    # Initialize signals, bot, and database
+    # Initialize signals, bot, database, and TimerManager
     shutdown_signal = asyncio.Event()
     bot_ready_signal = asyncio.Event()
     db_instance = dbClient()
     await db_instance.connect()
     discordBot = initialize_bot(config, db_instance, bot_ready_signal)
 
+    # Pass the shared db_instance to TimerManager
+    timer_manager = TimerManager(
+        db_instance=db_instance,
+        config=config,
+        nidhogg=nidhogg,
+        discord_bot=discordBot  # Pass discord_bot instance
+    )
+
+
     @discordBot.event
     async def on_disconnect():
         await db_instance.close()  # Close the connection on disconnect
 
     # Define API handler and start it concurrently
-    api_handler = APIHandler(discordBot)
+    api_handler = APIHandler(discord_bot=discordBot, config=config)
 
     async def start_api_server():
         """
         Starts the API server using uvicorn's serve() method.
         """
         import uvicorn
-        config = uvicorn.Config(api_handler.app, host="127.0.0.1", port=8000, log_level="info")
-        server = uvicorn.Server(config)
+        uvicorn_config = uvicorn.Config(api_handler.app, host="127.0.0.1", port=8000, log_level="info")
+        server = uvicorn.Server(uvicorn_config)
         await server.serve()
-
 
     # Set up graceful shutdown on signals
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, lambda: asyncio.create_task(shutdown(discordBot, db_instance, observer, shutdown_signal)))
+        loop.add_signal_handler(
+            sig,
+            lambda: asyncio.create_task(
+                shutdown(discordBot, db_instance, observer, shutdown_signal, timer_manager)
+            )
+        )
 
-    # Run all components concurrently
+    # Run all components concurrently, including TimerManager
     await asyncio.gather(
         discordBot.start(config.get("bot_token")),
         handle_terminal_input(db_instance, bot_ready_signal, shutdown_signal),
         start_api_server(),
+        timer_manager.start_timers(),  # Start the TimerManager loop
         shutdown_signal.wait()
     )
+
+    # Return instances for graceful shutdown in KeyboardInterrupt
+    return discordBot, db_instance, observer, shutdown_signal, timer_manager
+
 
 if __name__ == "__main__":
     try:
@@ -151,5 +182,6 @@ if __name__ == "__main__":
         print("\nKeyboardInterrupt. Exiting.")
         loop = asyncio.new_event_loop()  # Create a new event loop
         asyncio.set_event_loop(loop)  # Set it as the current loop
-        loop.run_until_complete(shutdown())
+        discordBot, db_instance, observer, shutdown_signal, timer_manager = loop.run_until_complete(main())
+        loop.run_until_complete(shutdown(discordBot, db_instance, observer, shutdown_signal, timer_manager))
         sys.exit(0)

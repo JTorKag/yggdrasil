@@ -9,6 +9,7 @@ from watchdog.events import FileSystemEventHandler
 import zipfile
 from pathlib import Path
 import shutil
+import subprocess
 
 
 class bifrost:
@@ -117,6 +118,41 @@ class bifrost:
             print(f"Error retrieving `.2h` files for game ID {game_id}: {e}")
             return []
 
+    @staticmethod
+    async def get_nations_with_2h_files(game_name: str, config: dict) -> List[str]:
+        """
+        Fetches a list of nations with .2h files for the given game.
+
+        Args:
+            game_name (str): The name of the game.
+            config (dict): The configuration dictionary containing paths.
+
+        Returns:
+            List[str]: A list of nation names with .2h files (including any prefixes like 'early_').
+        """
+        try:
+            # Fetch the dom_data_folder from the config
+            dom_data_folder = config.get("dom_data_folder")
+            if not dom_data_folder:
+                raise ValueError("dom_data_folder is not defined in the configuration.")
+
+            # Construct the game folder path
+            game_folder = Path(dom_data_folder) / "savedgames" / game_name
+            print(f"Looking for .2h files in: {game_folder}")  # Debug output
+
+            # Check if the game folder exists
+            if not game_folder.is_dir():
+                print(f"Game folder does not exist: {game_folder}")
+                return []
+
+            # Fetch and return all nation names with .2h files (full filename stem)
+            return [
+                file.stem  # Use the full stem, preserving any prefixes like 'early_'
+                for file in game_folder.glob("*.2h")
+            ]
+        except Exception as e:
+            print(f"Error fetching nations with .2h files for {game_name}: {e}")
+            return []
 
 
     @staticmethod
@@ -268,7 +304,177 @@ class bifrost:
             print(f"Error in force_game_host for game ID {game_id}: {e}")
             raise e
 
+    @staticmethod
+    async def read_stats_file(game_id: int, db_instance, config:dict):
+        """
+        Reads the stats.txt file for a given game ID and extracts relevant information.
 
+        Args:
+            game_id (int): The ID of the game.
+            db_instance: Database client instance to fetch game information.
+
+        Returns:
+            dict: A dictionary containing game name, turn number, and missing turns.
+
+        Raises:
+            FileNotFoundError: If the stats.txt file does not exist.
+            ValueError: If the file format is invalid.
+        """
+        # Fetch game details from the database
+        game_info = await db_instance.get_game_info(game_id)
+        if not game_info:
+            raise ValueError(f"Game with ID {game_id} not found.")
+
+        game_name = game_info.get("game_name")
+        savedgames_folder = os.path.join(config.get("dom_data_folder"), "savedgames", game_name)
+        stats_file_path = os.path.join(savedgames_folder, "stats.txt")
+
+        if not os.path.exists(stats_file_path):
+            raise FileNotFoundError(f"stats.txt not found for game ID {game_id} at {stats_file_path}.")
+
+        result = {
+            "game_name": game_name,
+            "turn": None,
+            "missing_turns": []
+        }
+
+        try:
+            with open(stats_file_path, "r") as stats_file:
+                lines = stats_file.readlines()
+
+            # Extract game name and turn from the header
+            if lines:
+                header_line = lines[0].strip()
+                if header_line.startswith("Statistics for game"):
+                    parts = header_line.split(" ")
+                    result["turn"] = int(parts[-1])
+                else:
+                    raise ValueError("Invalid stats.txt header format.")
+
+            # Extract players who didn't play
+            for line in lines[1:]:
+                if line.strip().endswith("didn't play this turn"):
+                    player_name = line.strip().replace(" didn't play this turn", "")
+                    result["missing_turns"].append(player_name)
+
+            return result
+        except Exception as e:
+            raise ValueError(f"Error parsing stats.txt for game ID {game_id}: {e}")
+
+
+    @staticmethod
+    async def backup_saved_game_files(game_id: int, db_instance, config: dict):
+        """
+        Copies all files from a game's saved game folder to a backup folder,
+        excluding files with .d6m and .map extensions. The backup folder is named after the current turn.
+
+        Args:
+            game_id (int): The ID of the game.
+            db_instance: Database client instance to fetch game information.
+            config (dict): The configuration dictionary containing paths.
+
+        Raises:
+            FileNotFoundError: If the saved game folder is not found.
+            ValueError: If the turn number cannot be determined.
+        """
+        try:
+            # Fetch game details from the database
+            game_info = await db_instance.get_game_info(game_id)
+            if not game_info:
+                raise ValueError(f"Game with ID {game_id} not found.")
+
+            game_name = game_info.get("game_name")
+            savedgames_folder = Path(config.get("dom_data_folder")) / "savedgames" / game_name
+            backup_folder = Path(config.get("backup_data_folder")) / str(game_id)
+
+            # Ensure the savedgames folder exists
+            if not savedgames_folder.exists():
+                raise FileNotFoundError(f"Saved games folder not found for game ID {game_id} at {savedgames_folder}")
+
+            # Check if stats.txt exists
+            stats_file = savedgames_folder / "stats.txt"
+            if not stats_file.exists():
+                print(f"stats.txt file not found for game ID {game_id} at {stats_file}. Skipping backup for this turn.")
+                return  # Gracefully skip the backup if stats.txt is not available
+
+            # Read the stats.txt file to determine the current turn
+            turn_number = None
+            with stats_file.open("r") as f:
+                for line in f:
+                    if line.startswith("Statistics for game"):
+                        parts = line.split(" ")
+                        turn_number = parts[-1].strip()
+                        break
+
+            if turn_number is None:
+                raise ValueError(f"Turn number could not be determined from stats.txt for game ID {game_id}")
+
+            # Create the turn-specific backup folder
+            turn_backup_folder = backup_folder / f"turn_{int(turn_number) + 1}"  # +1 since stats.txt reflects the last completed turn
+            turn_backup_folder.mkdir(parents=True, exist_ok=True)
+
+            # Copy files excluding .d6m and .map
+            for file_path in savedgames_folder.iterdir():
+                if file_path.is_file() and not file_path.suffix in [".d6m", ".map"]:
+                    shutil.copy(file_path, turn_backup_folder / file_path.name)
+
+            print(f"Backup for turn {turn_number} completed successfully in {turn_backup_folder}")
+
+        except FileNotFoundError as e:
+            print(f"Backup skipped: {e}")
+        except Exception as e:
+            print(f"Unexpected error during backup for game ID {game_id}: {e}")
+
+
+
+    @staticmethod
+    async def restore_saved_game_files(game_id: int, db_instance, config: dict):
+        """
+        Restores all files from the latest backup folder to the live saved game folder,
+        excluding files with .d6m and .map extensions. The backup folder is determined
+        based on the current turn. Deletes the backup folder for the restored turn.
+
+        Args:
+            game_id (int): The ID of the game.
+            db_instance: Database client instance to fetch game information.
+            config (dict): The configuration dictionary containing paths.
+
+        Raises:
+            FileNotFoundError: If the backup folder or saved games folder is not found.
+            ValueError: If the turn number cannot be determined.
+        """
+        # Use read_stats_file to determine the current turn
+        stats = await bifrost.read_stats_file(game_id, db_instance, config)
+        turn_number = stats.get("turn")
+        if turn_number is None:
+            raise ValueError(f"Turn number could not be determined for game ID {game_id}.")
+
+        game_name = stats["game_name"]
+        savedgames_folder = Path(config.get("dom_data_folder")) / "savedgames" / game_name
+        backup_folder = Path(config.get("backup_data_folder")) / str(game_id) / f"turn_{turn_number}"
+
+        # Ensure the backup folder exists
+        if not backup_folder.exists():
+            raise FileNotFoundError(f"Backup folder not found for game ID {game_id} at {backup_folder}.")
+
+        # Ensure the saved games folder exists
+        if not savedgames_folder.exists():
+            raise FileNotFoundError(f"Saved games folder not found for game ID {game_id} at {savedgames_folder}.")
+
+        # Restore files from the backup
+        for file_path in backup_folder.iterdir():
+            if file_path.is_file() and not file_path.suffix in [".d6m", ".map"]:
+                destination_path = savedgames_folder / file_path.name
+                shutil.copy(file_path, destination_path)
+
+        print(f"Restoration for game ID {game_id} (turn {turn_number}) completed. Deleting backup folder...")
+
+        # Remove the backup folder using rm -rf for reliability
+        try:
+            subprocess.run(["rm", "-rf", str(backup_folder)], check=True)
+            print(f"Backup folder {backup_folder} deleted successfully.")
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(f"Failed to delete backup folder {backup_folder}: {e}")
 
 
 

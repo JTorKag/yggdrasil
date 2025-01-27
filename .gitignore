@@ -22,4 +22,4 @@ config.json
 *.db
 
 # remove notes for full release
-#notes/
+notes/

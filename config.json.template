@@ -1,6 +1,13 @@
 {
-    "bot_token": "",
-    "guild_id": "",
-    "category_id": "",
-    "bot_channels": [""]
+    "bot_token":"",
+    "guild_id":"",
+    "category_id":"",
+    "bot_channels":[""],
+    "dominions_folder":"",
+    "dom_data_folder":"",
+    "backup_data_folder":"",
+    "game_host":"",
+    "game_admin":"",
+    "server_host":"",
+    "max_active_games": 8
 }
