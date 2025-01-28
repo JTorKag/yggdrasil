@@ -115,6 +115,9 @@ async def main():
     if is_wsl():
         os.environ["DOM6_CONF"] = "/home/jtorkag/.dominions6"
         print(f"DOM6_CONF set to: {os.environ['DOM6_CONF']}")
+    else:
+        os.environ["DOM6_CONF"] = config["dom_data_folder"]
+    
 
     # Set up necessary permissions and configurations
     bifrost.set_executable_permission(Path(config.get("dominions_folder")) / "dom6_amd64")

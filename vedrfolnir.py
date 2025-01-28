@@ -97,7 +97,7 @@ class dbClient:
                     nation TEXT,
                     extensions INTEGER,
                     currently_claimed BOOLEAN DEFAULT FALSE,
-                    PRIMARY KEY (player_id, nation),
+                    PRIMARY KEY (game_id, player_id, nation),
                     FOREIGN KEY (game_id) REFERENCES games (game_id)
                 )
                 """)
@@ -490,7 +490,7 @@ class dbClient:
         query = '''
         INSERT INTO players (game_id, player_id, nation, extensions, currently_claimed)
         VALUES (:game_id, :player_id, :nation, :extensions, :currently_claimed)
-        ON CONFLICT (player_id, nation) DO UPDATE SET currently_claimed = :currently_claimed;
+        ON CONFLICT (game_id, player_id, nation) DO UPDATE SET currently_claimed = :currently_claimed;
         '''
         params = {
             "game_id": game_id,
@@ -508,6 +508,7 @@ class dbClient:
         except Exception as e:
             print(f"Failed to add player {player_id} to game {game_id}: {e}")
             raise
+
 
     async def unclaim_nation(self, game_id, player_id, nation):
         """Unclaim a nation by setting currently_claimed to False."""
@@ -648,6 +649,23 @@ class dbClient:
             await cursor.execute(query)
             rows = await cursor.fetchall()
             return [int(row[0]) for row in rows]
+        
+    async def get_inactive_games(self):
+        """Retrieve inactive game channels."""
+        query = '''
+        SELECT channel_id
+        FROM games
+        WHERE game_active = 0;
+        '''
+        try:
+            async with self.connection.cursor() as cursor:
+                await cursor.execute(query)
+                rows = await cursor.fetchall()
+            return [{"channel_id": int(row[0])} for row in rows if row[0] is not None]
+        except Exception as e:
+            print(f"Error fetching inactive game channels: {e}")
+            return []
+
 
     async def update_process_pid(self, game_id, pid):
         query = """

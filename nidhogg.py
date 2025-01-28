@@ -60,13 +60,11 @@ class nidhogg:
 
             # Properly construct the --postexec command
             postexec_command = (
-                f"curl -X POST \"http://127.0.0.1:8000/postexec_notify?game_id={game_id}\" "
-                f"-H 'Content-Type: application/x-www-form-urlencoded'"
+                f"curl -X POST http://127.0.0.1:8000/postexec_notify?game_id={game_id}"
             )
 
             preexec_command = (
-                f"curl -X POST \"http://127.0.0.1:8000/preexec_backup?game_id={game_id}\" "
-                f"-H 'Content-Type: application/x-www-form-urlencoded'"
+                f"curl -X POST http://127.0.0.1:8000/preexec_backup?game_id={game_id}"
             )
 
 

@@ -12,16 +12,30 @@ from datetime import datetime, timedelta, timezone
 import os
 
 def require_bot_channel(config):
-    """Decorator to restrict commands to bot-specific channels or channels linked to active games."""
+    """Decorator to restrict commands to bot-specific channels or channels linked to active or inactive games."""
     def decorator(command_func: Callable[..., Awaitable[None]]) -> Callable[..., Awaitable[None]]:
         @wraps(command_func)
         async def wrapper(interaction: discord.Interaction, *args, **kwargs):
             bot = interaction.client  # Access the bot instance from the interaction
-            # Combine active game channels with bot_channels
-            active_game_channels = await bot.db_instance.get_active_game_channels()
-            allowed_channels = set(active_game_channels + list(map(int, config.get("bot_channels", []))))
+            command_name = interaction.command.name  # Get the name of the command being executed
 
-            # If allowed_channels is empty, allow any channel
+            # Get allowed bot-specific channels
+            bot_channels = list(map(int, config.get("bot_channels", [])))
+            allowed_channels = set(bot_channels)
+
+            if command_name == "delete-lobby":
+                # Add inactive game channels for the delete-lobby command
+                inactive_game_channels = [
+                    game["channel_id"]
+                    for game in await bot.db_instance.get_inactive_games()
+                ]
+                allowed_channels.update(inactive_game_channels)
+            else:
+                # Add active game channels for all other commands
+                active_game_channels = await bot.db_instance.get_active_game_channels()
+                allowed_channels.update(active_game_channels)
+
+            # Check if the current channel is allowed
             if not allowed_channels or interaction.channel_id in allowed_channels:
                 return await command_func(interaction, *args, **kwargs)
 
@@ -1133,6 +1147,7 @@ class discordClient(discord.Client):
                         f"**Game Owner**: {game_info['game_owner']}\n"
                         f"**Version**: {game_info['creation_version']}\n"
                         f"**Creation Date**: {game_info['creation_date']}\n"
+                        f"**Mods**: {game_info['game_mods']}\n"
                     ),
                     inline=False,
                 )
@@ -1689,11 +1704,11 @@ class discordClient(discord.Client):
         @self.tree.command(
             name="end-game",
             description="Ends the game but keeps the lobby active.",
-            guild=discord.Object(id=self.guild_id)
+            guild=discord.Object(id=self.guild_id),
         )
         @require_bot_channel(self.config)
         @require_game_owner_or_admin(self.config)
-        async def end_game(interaction: discord.Interaction, game_winner: int):
+        async def end_game(interaction: discord.Interaction, game_winner: int, confirmation_game_name: str):
             """Ends the game but keeps the lobby active."""
             await interaction.response.defer()
 
@@ -1704,6 +1719,16 @@ class discordClient(discord.Client):
                 return
 
             game_info = await self.db_instance.get_game_info(game_id)
+            if not game_info:
+                await interaction.followup.send("Game information not found.")
+                return
+
+            # Validate the confirmation_game_name
+            if confirmation_game_name != game_info["game_name"]:
+                await interaction.followup.send(
+                    f"The confirmation name '{confirmation_game_name}' does not match the actual game name '{game_info['game_name']}'."
+                )
+                return
 
             # Reject if the game is currently running
             if game_info["game_running"]:
@@ -1729,10 +1754,11 @@ class discordClient(discord.Client):
 
 
 
+
         @self.tree.command(
             name="delete-lobby",
             description="Deletes the game lobby and associated role.",
-            guild=discord.Object(id=self.guild_id)
+            guild=discord.Object(id=self.guild_id),
         )
         @require_bot_channel(self.config)
         @require_game_owner_or_admin(self.config)
@@ -1749,6 +1775,11 @@ class discordClient(discord.Client):
             game_info = await self.db_instance.get_game_info(game_id)
             if not game_info:
                 await interaction.followup.send("Game information not found.")
+                return
+
+            # Check if the game is still active
+            if game_info["game_active"]:
+                await interaction.followup.send("The game is still active. Please end the game before deleting the lobby.")
                 return
 
             # Validate the confirmation_game_name
@@ -1783,55 +1814,7 @@ class discordClient(discord.Client):
             except Exception as e:
                 await interaction.followup.send(f"Failed to delete lobby: {e}")
 
-
-
-
-        @self.tree.command(
-            name="end-game-and-lobby",
-            description="Ends the game and deletes the associated lobby and role.",
-            guild=discord.Object(id=self.guild_id)
-        )
-        @require_bot_channel(self.config)
-        @require_game_owner_or_admin(self.config)
-        async def end_game_and_lobby(interaction: discord.Interaction, game_winner: int, confirmation_game_name: str):
-            """Ends the game and deletes the associated lobby and role."""
-            await interaction.response.defer()
-
-            # Get the game ID associated with the channel
-            game_id = await self.db_instance.get_game_id_by_channel(interaction.channel_id)
-            if not game_id:
-                await interaction.followup.send("No game lobby is associated with this channel.")
-                return
-
-            game_info = await self.db_instance.get_game_info(game_id)
-            if not game_info:
-                await interaction.followup.send("Game information not found.")
-                return
-
-            # Validate the confirmation_game_name
-            if confirmation_game_name != game_info["game_name"]:
-                await interaction.followup.send(
-                    f"The confirmation name '{confirmation_game_name}' does not match the actual game name '{game_info['game_name']}'."
-                )
-                return
-
-            try:
-                # Call `end_game`
-                await end_game(interaction, game_winner)
-
-                # Call `delete_lobby`
-                await delete_lobby(interaction, confirmation_game_name)
-
-                winner_text = "Everybody Lost" if game_winner == -666 else f"Player {game_winner}"
-                await interaction.followup.send(f"The game has been ended and the lobby has been deleted. Winner: {winner_text}.")
-            except Exception as e:
-                await interaction.followup.send(f"Failed to end the game and delete the lobby: {e}")
-
-
-
-
         @end_game.autocomplete("game_winner")
-        @end_game_and_lobby.autocomplete("game_winner")
         async def game_winner_autocomplete(interaction: discord.Interaction, current: str):
             """Autocomplete options for game winner."""
             # Get the game ID associated with the channel
@@ -2116,7 +2099,7 @@ class discordClient(discord.Client):
                 def __init__(self, prompt_type: str):
                     super().__init__(
                         placeholder=f"Choose {'one or more' if multi_select else 'one'} {prompt_type}{'s' if multi_select else ''}...",
-                        min_values=1 if multi_select else 1,
+                        min_values=0 if multi_select else 1,  # Allow zero selection if multi_select is True
                         max_values=len(options) if multi_select else 1,
                         options=[
                             discord.SelectOption(
@@ -2124,7 +2107,6 @@ class discordClient(discord.Client):
                                 value=option["location"],
                                 description=option.get("yggdescr", None),
                                 emoji=resolve_emoji(option.get("yggemoji")),
-                                # Preselected values only apply for the relevant trimmed condition
                                 default=(
                                     option["location"].split('/', 1)[-1] in (preselected_values or [])
                                     if prompt_type == "map"
@@ -2134,6 +2116,7 @@ class discordClient(discord.Client):
                             for option in options
                         ],
                     )
+
 
                 async def callback(self, interaction: discord.Interaction):
                     if not interaction.response.is_done():
@@ -2199,6 +2182,16 @@ class discordClient(discord.Client):
                 await interaction.response.send_message("This channel is not associated with any active game.", ephemeral=True)
                 return
 
+            # Check if the game has already started or is running
+            game_info = await self.db_instance.get_game_info(game_id)
+            if game_info:
+                if game_info.get("game_started"):
+                    await interaction.response.send_message("The game has already started. You cannot change the mods.", ephemeral=True)
+                    return
+                if game_info.get("game_running"):
+                    await interaction.response.send_message("The game is currently running. You cannot change the mods.", ephemeral=True)
+                    return
+
             # Fetch the preselected mods
             current_mods = await self.db_instance.get_mods(game_id)
 
@@ -2211,10 +2204,16 @@ class discordClient(discord.Client):
             )
 
             if selected_mods:
+                # Update mods with the selected ones
                 await self.db_instance.update_mods(game_id, mods_locations)
                 await interaction.followup.send(f"You selected: {', '.join(selected_mods)}", ephemeral=True)
             else:
-                await interaction.followup.send("No selection was made.", ephemeral=True)
+                # Clear all mods if no selection was made
+                await self.db_instance.update_mods(game_id, [])
+                await interaction.followup.send("No mods selected. All mods have been removed.", ephemeral=True)
+
+
+
 
 
         @self.tree.command(
@@ -2231,6 +2230,12 @@ class discordClient(discord.Client):
                 await interaction.response.send_message("This channel is not associated with any active game.", ephemeral=True)
                 return
 
+            # Check if the game has already started
+            game_info = await self.db_instance.get_game_info(game_id)
+            if game_info and game_info.get("game_started"):
+                await interaction.response.send_message("The game has already started. You cannot change the map.", ephemeral=True)
+                return
+
             # Fetch the preselected map
             current_map = await self.db_instance.get_map(game_id)
 
@@ -2239,10 +2244,10 @@ class discordClient(discord.Client):
 
             # Add default options
             default_maps = [
-                {"name": "Vanilla Small 10", "location": "vanilla_10", "yggemoji":":dom6:", "yggdescr":"Small Lakes & One Cave"},
-                {"name": "Vanilla Medium 15", "location": "vanilla_15", "yggemoji":":dom6:", "yggdescr":"Small Lakes & One Cave"},
-                {"name": "Vanilla Large 20", "location": "vanilla_20", "yggemoji":":dom6:", "yggdescr":"Small Lakes & One Cave"},
-                {"name": "Vanilla Enormous 25", "location": "vanilla_25", "yggemoji":":dom6:", "yggdescr":"Small Lakes & One Cave"}
+                {"name": "Vanilla Small 10", "location": "vanilla_10", "yggemoji": ":dom6:", "yggdescr": "Small Lakes & One Cave"},
+                {"name": "Vanilla Medium 15", "location": "vanilla_15", "yggemoji": ":dom6:", "yggdescr": "Small Lakes & One Cave"},
+                {"name": "Vanilla Large 20", "location": "vanilla_20", "yggemoji": ":dom6:", "yggdescr": "Small Lakes & One Cave"},
+                {"name": "Vanilla Enormous 25", "location": "vanilla_25", "yggemoji": ":dom6:", "yggdescr": "Small Lakes & One Cave"},
             ]
             maps = default_maps + maps  # Prepend default maps; use `maps + default_maps` to append instead
 
@@ -2256,6 +2261,7 @@ class discordClient(discord.Client):
                 await interaction.followup.send(f"You selected: {', '.join(selected_map)}", ephemeral=True)
             else:
                 await interaction.followup.send("No selection was made.", ephemeral=True)
+
 
 
         @self.tree.command(
