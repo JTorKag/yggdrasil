@@ -1208,7 +1208,7 @@ class discordClient(discord.Client):
 
 
         @self.tree.command(
-            name="restart_game_to_lobby",
+            name="restart-game-to-lobby",
             description="Restarts the game back to the lobby state.",
             guild=discord.Object(id=self.guild_id)
         )
@@ -1984,7 +1984,7 @@ class discordClient(discord.Client):
 
 
         @self.tree.command(
-            name="get_version",
+            name="get-version",
             description="Fetches the version of the Dominions server executable.",
             guild=discord.Object(id=self.guild_id)  # Replace with your actual guild ID
         )
@@ -2006,14 +2006,14 @@ class discordClient(discord.Client):
                 await interaction.followup.send(f"Error fetching version: {e}", ephemeral=True)
 
 
-        @self.tree.command(
-            name="echo",
-            description="Echos back text",
-            guild=discord.Object(id=self.guild_id)
-        )
-        @require_bot_channel(self.config)
-        async def echo_command(interaction: discord.Interaction, echo_text:str, your_name:str):
-            await interaction.response.send_message(echo_text + your_name)
+        # @self.tree.command(
+        #     name="echo",
+        #     description="Echos back text",
+        #     guild=discord.Object(id=self.guild_id)
+        # )
+        # @require_bot_channel(self.config)
+        # async def echo_command(interaction: discord.Interaction, echo_text:str, your_name:str):
+        #     await interaction.response.send_message(echo_text + your_name)
 
         @self.tree.command(
             name="upload-map",
@@ -2169,7 +2169,7 @@ class discordClient(discord.Client):
 
 
         @self.tree.command(
-            name="select_mods",
+            name="select-mods",
             description="Select mods for game.",
             guild=discord.Object(id=self.guild_id),
         )
@@ -2217,7 +2217,7 @@ class discordClient(discord.Client):
 
 
         @self.tree.command(
-            name="select_map",
+            name="select-map",
             description="Select map for game.",
             guild=discord.Object(id=self.guild_id),
         )
@@ -2265,7 +2265,7 @@ class discordClient(discord.Client):
 
 
         @self.tree.command(
-            name="list_active_games",
+            name="list-active-games",
             description="Lists all active games.",
             guild=discord.Object(id=self.guild_id)  # Replace with your actual guild ID
         )
