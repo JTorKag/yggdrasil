@@ -2296,33 +2296,6 @@ class discordClient(discord.Client):
 
 
 
-        @self.tree.command(
-            name="dropdown_test",
-            description="Test the generic dropdown menu.",
-            guild=discord.Object(id=self.guild_id)
-        )
-        @require_bot_channel(self.config)
-        async def dropdown_test_command(interaction: discord.Interaction):
-
-            options = [{'name': 'smackdown_ea1', 'location': 'smackdown_ea1/smackdown_ea1.map','yggemoji': 'DreamAtlas:', 'yggdescr': '"for winners only'},
-                       {'name': 'teamstarttest', 'location': 'teamstarttest/teamstarttest.map', 'yggemoji': '::', 'yggdescr': ''},
-                       {'name': 'Softball', 'location': 'Softball/Softball.map', 'yggemoji': '::', 'yggdescr': ''}]
-
-            selected_names, selected_locations = await create_dropdown(interaction, options, "mod")
-
-            if selected_names:
-                await interaction.followup.send(f"You selected: {', '.join(selected_names)}", ephemeral=True)
-            else:
-                await interaction.followup.send("No selection was made.", ephemeral=True)
-
-
-
-
-
-
-
-
-
     async def on_ready(self):
         print(f'Logged on as {self.user}!')
         await self.db_instance.setup_db()
