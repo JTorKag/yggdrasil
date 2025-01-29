@@ -3,6 +3,10 @@
 
 Yggdrasil is a robust Discord bot and game management system tailored for Dominions 6. It includes a suite of tools for managing multiplayer games, game timers, backups, and player interactions, all while leveraging a FastAPI-based API for automation and notifications.
 
+This was half a project in "can I?" and half to solve a hosting games on a discord server. It was built from the start with the intention of it being a project anyone could clone and spin up for their own community. It's currently running but has yet to be put through the paces to be really tested. Use at your own risk. 
+
+If you want to spin up your own service feel free to reach out for some help with yggdrasil specfic questions or troubleshooting. 
+
 ---
 
 ## **Features**
@@ -20,8 +24,8 @@ Yggdrasil is a robust Discord bot and game management system tailored for Domini
 ## **Getting Started**
 
 ### **System Requirements**
-- **Python**: 3.9 or later
-- **Operating System**: Linux (Tested on Ubuntu/Debian)
+- **Python**: 3.11.2
+- **Operating System**: Linux (Tested on Debian & WSL)
 - **Dominions 6**: Installed on the same server
 
 ---
@@ -44,13 +48,14 @@ pip install uvicorn
 #### **System Packages**
 Install the required system packages using `apt`:
 ```bash
-sudo apt install lsb-release
 sudo apt install screen
 sudo apt install curl
+sudo apt install lsb-release
+sudo apt install libgl1
 sudo apt install libglu1-mesa
 sudo apt install libsdl2-2.0-0
 ```
-The last two are dominions required even in headless mode. 
+These are mostly just to run the dom binary.
 
 ---
 
@@ -75,7 +80,6 @@ The last two are dominions required even in headless mode.
      - Discord Bot Token
      - Guild ID
      - Dominions folder path
-     - API server details
 
 4. Start the bot:
    ```bash
