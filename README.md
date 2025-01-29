@@ -28,7 +28,7 @@ If you want to spin up your own service feel free to reach out for some help wit
 - **Operating System**: Linux (Tested on Debian & WSL)
 - **Dominions 6**: Installed on the same server
 
-### **System Requirements**
+### **Modules**
 - **yggdrasil.py**: Main script
 - **vedrfolnir.py**: SQLite Module
 - **norns.py**: Timer Module
