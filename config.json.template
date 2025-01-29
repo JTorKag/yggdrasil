@@ -9,5 +9,6 @@
     "game_host":"",
     "game_admin":"",
     "server_host":"",
-    "max_active_games": 8
+    "max_active_games": 8,
+    "dev_eviron":""
 }

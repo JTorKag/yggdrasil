@@ -111,10 +111,9 @@ async def main():
     """Main entry point for the application."""
     config = create_config()
 
-    # Only needed for WSL. Remove in production.
+    # If you need WSL specific configs setup here. 
     if is_wsl():
-        os.environ["DOM6_CONF"] = "/home/jtorkag/.dominions6"
-        print(f"DOM6_CONF set to: {os.environ['DOM6_CONF']}")
+        os.environ["DOM6_CONF"] = config["dev_eviron"]
     else:
         os.environ["DOM6_CONF"] = config["dom_data_folder"]
     
