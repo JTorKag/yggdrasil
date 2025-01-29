@@ -16,8 +16,8 @@ def require_bot_channel(config):
     def decorator(command_func: Callable[..., Awaitable[None]]) -> Callable[..., Awaitable[None]]:
         @wraps(command_func)
         async def wrapper(interaction: discord.Interaction, *args, **kwargs):
-            bot = interaction.client  # Access the bot instance from the interaction
-            command_name = interaction.command.name  # Get the name of the command being executed
+            bot = interaction.client  
+            command_name = interaction.command.name  
 
             # Get allowed bot-specific channels
             bot_channels = list(map(int, config.get("bot_channels", [])))
@@ -51,7 +51,6 @@ def require_game_admin(config):
     def decorator(command_func: Callable[..., Awaitable[None]]) -> Callable[..., Awaitable[None]]:
         @wraps(command_func)
         async def wrapper(interaction: discord.Interaction, *args, **kwargs):
-            # Get the game admin role ID from the config
             admin_role_id = int(config.get("game_admin"))
             # Get the admin role from the guild
             admin_role = discord.utils.get(interaction.guild.roles, id=admin_role_id)
@@ -80,7 +79,6 @@ def require_game_owner_or_admin(config):
     def decorator(command_func: Callable[..., Awaitable[None]]) -> Callable[..., Awaitable[None]]:
         @wraps(command_func)
         async def wrapper(interaction: discord.Interaction, *args, **kwargs):
-            # Get the game admin role ID from the config
             admin_role_id = int(config.get("game_admin"))
             # Get the admin role from the guild
             admin_role = discord.utils.get(interaction.guild.roles, id=admin_role_id)
@@ -128,7 +126,6 @@ def require_game_host_or_admin(config):
     def decorator(command_func: Callable[..., Awaitable[None]]) -> Callable[..., Awaitable[None]]:
         @wraps(command_func)
         async def wrapper(interaction: discord.Interaction, *args, **kwargs):
-            # Get the role IDs from the config
             host_role_id = int(config.get("game_host"))
             admin_role_id = int(config.get("game_admin"))
 
@@ -180,8 +177,6 @@ def serverStatusJsonToDiscordFormatted(status_json):
     game_info = f"**Game Name:** {status_json.get('game_name')}\n"
     game_info += f"**Status:** {status_json.get('status')}\n"
     game_info += f"**Turn:** {status_json.get('turn')}\n"
-    #This is dominions time, not ygg time
-    #game_info += f"**Time Left:** {status_json.get('time_left')}\n"
     message_parts.append(game_info)
     
     # Add players info

@@ -1,3 +1,5 @@
+# db class
+
 import aiosqlite
 import asyncio
 import random
@@ -29,7 +31,7 @@ class dbClient:
 
     async def setup_db(self):
         """Create the DB file and initial tables if they don't exist."""
-        await self.connect()  # Ensure the connection is established
+        await self.connect() 
         try:
             async with self.connection.cursor() as cursor:
                 # Create tables
@@ -252,7 +254,7 @@ class dbClient:
             "game_owner": game_owner,
             "creation_version": creation_version,
             "game_started": game_started,
-            "game_winner": game_winner  # Include game_winner here
+            "game_winner": game_winner
         }
 
 

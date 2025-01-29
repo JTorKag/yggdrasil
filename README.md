@@ -28,6 +28,13 @@ If you want to spin up your own service feel free to reach out for some help wit
 - **Operating System**: Linux (Tested on Debian & WSL)
 - **Dominions 6**: Installed on the same server
 
+### **System Requirements**
+- **yggdrasil.py**: Main script
+- **vedrfolnir.py**: SQLite Module
+- **norns.py**: Timer Module
+- **nidhogg.py**: Dom binary Module
+- **gjallarhorn.py**: API Module
+- **bifrost.py**: Filesystem I/O Module
 ---
 
 ### **Dependencies**
@@ -37,7 +44,7 @@ Install the following dependencies to ensure the application works as intended.
 Set up a virtual environment and install the required libraries:
 ```bash
 python3 -m venv ygg-venv
-source ygg-venv/bin/activate
+. ygg-venv/bin/activate
 pip install -U discord.py
 pip install aiosqlite
 pip install watchdog
