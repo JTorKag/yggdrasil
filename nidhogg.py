@@ -57,6 +57,10 @@ class nidhogg:
             no_going_ai = game_details["no_going_ai"]
             research_random = game_details["research_random"]
             teamgame = game_details["teamgame"]
+            if game_details["game_mods"]:
+                game_mods = game_details["game_mods"].split(",")
+            else:
+                game_mods = []
 
             # Properly construct the --postexec command
             postexec_command = (
@@ -111,6 +115,11 @@ class nidhogg:
             else:
                 command.extend(["--mapfile", game_map])
 
+            # Add mods logic
+            if game_mods:
+                for mod in game_mods:
+                    command.extend(["--enablemod", mod])
+
             # Add team game logic
             if teamgame:
                 command.append("--teamgame")
@@ -120,6 +129,8 @@ class nidhogg:
             # Prepare the screen command
             screen_name = f"dom_{game_id}"
             screen_command = ["screen", "-dmS", screen_name] + command
+
+            print(shlex.join(screen_command))
 
             # Launch the screen session
             screen_process = subprocess.Popen(
@@ -133,6 +144,7 @@ class nidhogg:
 
             # Wait for the `dom6_amd64` process to start
             await asyncio.sleep(1)
+
 
             # Retrieve the PID of the `dom6_amd64` process
             try:
