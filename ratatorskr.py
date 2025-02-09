@@ -487,7 +487,7 @@ class discordClient(discord.Client):
         @new_game_command.autocomplete("global_slots")
         async def global_slots_autocomplete(interaction: discord.Interaction, current: str):
             # Predefined options for global slots
-            options = [5, 3, 4, 6, 7, 8, 9]
+            options = [5, 3, 7, 9, 11, 13, 15]
 
             # Filter options based on the current input
             matches = [str(option) for option in options if current.isdigit() and current in str(option)]
