@@ -2323,9 +2323,9 @@ class discordClient(discord.Client):
         if self.bot_ready_signal:
             self.bot_ready_signal.set()
 
-    async def on_message(self, message):
-        if message.author == self.user:
-            return 
-        print(f'Message from {message.author}: {message.content} in {message.channel}')
+    # async def on_message(self, message):
+    #     if message.author == self.user:
+    #         return 
+    #     print(f'Message from {message.author}: {message.content} in {message.channel}')
     
 
