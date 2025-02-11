@@ -16,8 +16,8 @@ def require_bot_channel(config):
     def decorator(command_func: Callable[..., Awaitable[None]]) -> Callable[..., Awaitable[None]]:
         @wraps(command_func)
         async def wrapper(interaction: discord.Interaction, *args, **kwargs):
-            bot = interaction.client  
-            command_name = interaction.command.name  
+            bot = interaction.client  # Access the bot instance from the interaction
+            command_name = interaction.command.name  # Get the name of the command being executed
 
             # Get allowed bot-specific channels
             bot_channels = list(map(int, config.get("bot_channels", [])))
@@ -51,6 +51,7 @@ def require_game_admin(config):
     def decorator(command_func: Callable[..., Awaitable[None]]) -> Callable[..., Awaitable[None]]:
         @wraps(command_func)
         async def wrapper(interaction: discord.Interaction, *args, **kwargs):
+            # Get the game admin role ID from the config
             admin_role_id = int(config.get("game_admin"))
             # Get the admin role from the guild
             admin_role = discord.utils.get(interaction.guild.roles, id=admin_role_id)
@@ -79,6 +80,7 @@ def require_game_owner_or_admin(config):
     def decorator(command_func: Callable[..., Awaitable[None]]) -> Callable[..., Awaitable[None]]:
         @wraps(command_func)
         async def wrapper(interaction: discord.Interaction, *args, **kwargs):
+            # Get the game admin role ID from the config
             admin_role_id = int(config.get("game_admin"))
             # Get the admin role from the guild
             admin_role = discord.utils.get(interaction.guild.roles, id=admin_role_id)
@@ -126,6 +128,7 @@ def require_game_host_or_admin(config):
     def decorator(command_func: Callable[..., Awaitable[None]]) -> Callable[..., Awaitable[None]]:
         @wraps(command_func)
         async def wrapper(interaction: discord.Interaction, *args, **kwargs):
+            # Get the role IDs from the config
             host_role_id = int(config.get("game_host"))
             admin_role_id = int(config.get("game_admin"))
 
@@ -177,6 +180,8 @@ def serverStatusJsonToDiscordFormatted(status_json):
     game_info = f"**Game Name:** {status_json.get('game_name')}\n"
     game_info += f"**Status:** {status_json.get('status')}\n"
     game_info += f"**Turn:** {status_json.get('turn')}\n"
+    #This is dominions time, not ygg time
+    #game_info += f"**Time Left:** {status_json.get('time_left')}\n"
     message_parts.append(game_info)
     
     # Add players info
@@ -1130,6 +1135,8 @@ class discordClient(discord.Client):
                     color=discord.Color.green(),
                 )
 
+                story_events_map = {0: "None", 1: "Some", 2: "Full"}
+                
                 # Format and group details for the embed
                 embed.add_field(
                     name="Basic Information",
@@ -1137,12 +1144,13 @@ class discordClient(discord.Client):
                         f"**Game Name**: {game_info['game_name']}\n"
                         f"**Game Type**: {game_info['game_type']}\n"
                         f"**Game Era**: {game_era_value}\n"
-                        f"**Game Port**: {game_info['game_port']}\n"
-                        f"**Host Address**: {server_host}\n"
+                        f"🔌 **Game Port**: {game_info['game_port']}\n"
+                        f"🌐 **Host Address**: {server_host}\n"
                         f"**Game Owner**: {game_info['game_owner']}\n"
                         f"**Version**: {game_info['creation_version']}\n"
                         f"**Creation Date**: {game_info['creation_date']}\n"
-                        f"**Mods**: {game_info['game_mods']}\n"
+                        f"🔧 **Mods**: {game_info['game_mods']}\n"
+                        f"🗺 **Map**: {game_info['game_map']}\n"
                     ),
                     inline=False,
                 )
@@ -1153,7 +1161,7 @@ class discordClient(discord.Client):
                         f"**Global Slots**: {game_info['global_slots']}\n"
                         f"**Research Random**: {'True' if game_info['research_random'] else 'False'}\n"
                         f"**Event Rarity**: {game_info['eventrarity']}\n"
-                        f"**Story Events**: {story_events_value}\n"
+                        f"**Story Events**: {story_events_map[game_info['story_events']]}\n"
                         f"**No Going AI**: {'True' if game_info['no_going_ai'] else 'False'}\n"
                         f"**Team Game**: {'True' if game_info['teamgame'] else 'False'}\n"
                         f"**Clustered Starts**: {'True' if game_info['clustered'] else 'False'}\n"
@@ -1209,7 +1217,7 @@ class discordClient(discord.Client):
         )
         @require_bot_channel(self.config)
         @require_game_owner_or_admin(self.config)
-        async def restart_game_to_lobby(interaction: discord.Interaction):
+        async def restart_game_to_lobby(interaction: discord.Interaction, confirm_game_name:str):
             """Restarts the game associated with the current channel back to the lobby state."""
             # Acknowledge interaction to prevent timeout
             await interaction.response.defer(ephemeral=True)
@@ -1224,6 +1232,14 @@ class discordClient(discord.Client):
             game_info = await self.db_instance.get_game_info(game_id)
             if not game_info:
                 await interaction.followup.send("Game information not found in the database.", ephemeral=True)
+                return
+            
+
+            # Validate the confirm_game_name
+            if confirm_game_name != game_info["game_name"]:
+                await interaction.followup.send(
+                    f"The confirmation name '{confirm_game_name}' does not match the actual game name '{game_info['game_name']}'."
+                )
                 return
 
             # Check if the game has started
@@ -1247,6 +1263,7 @@ class discordClient(discord.Client):
                 await interaction.followup.send(f"Failed to restore game files: {e}", ephemeral=True)
                 return
             
+            await asyncio.sleep(5)
             success = await self.nidhogg.launch_game_lobby(game_id, self.db_instance)
             if success:
                 await interaction.followup.send(f"Game lobby launched for game ID: {game_id}.")
@@ -1703,7 +1720,7 @@ class discordClient(discord.Client):
         )
         @require_bot_channel(self.config)
         @require_game_owner_or_admin(self.config)
-        async def end_game(interaction: discord.Interaction, game_winner: int, confirmation_game_name: str):
+        async def end_game(interaction: discord.Interaction, game_winner: int, confirm_game_name: str):
             """Ends the game but keeps the lobby active."""
             await interaction.response.defer()
 
@@ -1718,10 +1735,10 @@ class discordClient(discord.Client):
                 await interaction.followup.send("Game information not found.")
                 return
 
-            # Validate the confirmation_game_name
-            if confirmation_game_name != game_info["game_name"]:
+            # Validate the confirm_game_name
+            if confirm_game_name != game_info["game_name"]:
                 await interaction.followup.send(
-                    f"The confirmation name '{confirmation_game_name}' does not match the actual game name '{game_info['game_name']}'."
+                    f"The confirmation name '{confirm_game_name}' does not match the actual game name '{game_info['game_name']}'."
                 )
                 return
 
@@ -1757,7 +1774,7 @@ class discordClient(discord.Client):
         )
         @require_bot_channel(self.config)
         @require_game_owner_or_admin(self.config)
-        async def delete_lobby(interaction: discord.Interaction, confirmation_game_name: str):
+        async def delete_lobby(interaction: discord.Interaction, confirm_game_name: str):
             """Deletes the game lobby and associated role."""
             await interaction.response.defer()
 
@@ -1777,10 +1794,10 @@ class discordClient(discord.Client):
                 await interaction.followup.send("The game is still active. Please end the game before deleting the lobby.")
                 return
 
-            # Validate the confirmation_game_name
-            if confirmation_game_name != game_info["game_name"]:
+            # Validate the confirm_game_name
+            if confirm_game_name != game_info["game_name"]:
                 await interaction.followup.send(
-                    f"The confirmation name '{confirmation_game_name}' does not match the actual game name '{game_info['game_name']}'."
+                    f"The confirmation name '{confirm_game_name}' does not match the actual game name '{game_info['game_name']}'."
                 )
                 return
 
