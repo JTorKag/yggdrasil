@@ -53,13 +53,11 @@ async def handle_terminal_input(db_instance, bot_ready_signal, shutdown_signal):
                 await db_instance.connect()
                 print("\nDB instance reopened.")
             elif user_input.lower() == 'active_games':
-                if db_instance and db_instance.connection:
-                    async with db_instance.connection.cursor() as cursor:
-                        await cursor.execute("SELECT COUNT(*) FROM games WHERE game_active = 1;")
-                        active_game_count = (await cursor.fetchone())[0]
-                        print(f"\nThere are currently {active_game_count} active games.")
-                else:
-                    print("\nDatabase connection is not open. Use the 'open_db' command first.")
+                try:
+                    active_game_count = await db_instance.get_active_games_count()
+                    print(f"\nThere are currently {active_game_count} active games.")
+                except Exception as e:
+                    print(f"\nError getting active games count: {e}")
             else:
                 print(f"\nUnknown command: {user_input}")
         except EOFError:
@@ -88,6 +86,9 @@ async def shutdown(discordBot, db_instance, observer, shutdown_signal, timer_man
         observer.stop()
         print("\nStopped monitoring dom_data_folder.")
         observer.join()
+    
+    # Shutdown thread pool executors
+    bifrost._shutdown_executor()
     
     # Set the shutdown signal
     shutdown_signal.set()
@@ -119,7 +120,7 @@ async def main():
     
 
     # Set up necessary permissions and configurations
-    bifrost.set_executable_permission(Path(config.get("dominions_folder")) / "dom6_amd64")
+    await bifrost.set_executable_permission(Path(config.get("dominions_folder")) / "dom6_amd64")
     observer = bifrost.initialize_dom_data_folder(config)
 
     # Initialize signals, bot, database, and TimerManager
@@ -140,7 +141,17 @@ async def main():
 
     @discordBot.event
     async def on_disconnect():
-        await db_instance.close()  # Close the connection on disconnect
+        print("[INFO] Discord bot disconnected")
+        # Note: Database connection will auto-recover due to retry mechanisms
+
+    @discordBot.event
+    async def on_ready():
+        print(f"[INFO] Discord bot reconnected as {discordBot.user}")
+        print(f"[INFO] Connected to guild: {discordBot.get_guild(config.get('guild_id'))}")
+        
+    @discordBot.event
+    async def on_resumed():
+        print("[INFO] Discord bot session resumed")
 
     # Define API handler and start it concurrently
     api_handler = APIHandler(discord_bot=discordBot, config=config)

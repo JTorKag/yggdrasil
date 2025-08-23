@@ -15,24 +15,87 @@ class dbClient:
         if cls._instance is None:
             cls._instance = super(dbClient, cls).__new__(cls)
             cls._instance.connection = None
+            cls._instance.db_path = 'ygg.db'
+            cls._instance._connection_lock = asyncio.Lock()
         return cls._instance
+
+    async def _ensure_connection(self):
+        """Ensure database connection is alive, reconnect if needed."""
+        async with self._connection_lock:
+            if self.connection is None:
+                await self._connect()
+            else:
+                # Test connection health
+                try:
+                    await self.connection.execute("SELECT 1")
+                except (aiosqlite.OperationalError, sqlite3.OperationalError):
+                    print("[DB] Connection lost, reconnecting...")
+                    try:
+                        await self.connection.close()
+                    except (aiosqlite.OperationalError, sqlite3.OperationalError):
+                        pass  # Expected when connection is already broken
+                    self.connection = None
+                    await self._connect()
+
+    async def _connect(self):
+        """Internal connection method with retries."""
+        max_retries = 5
+        retry_delay = 1
+        
+        for attempt in range(max_retries):
+            try:
+                self.connection = await aiosqlite.connect(self.db_path, timeout=30)
+                self.connection.row_factory = sqlite3.Row
+                # Test the connection
+                await self.connection.execute("SELECT 1")
+                print(f"[DB] Connected successfully (attempt {attempt + 1})")
+                return
+            except Exception as e:
+                print(f"[DB] Connection attempt {attempt + 1} failed: {e}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+                else:
+                    raise Exception(f"Failed to connect to database after {max_retries} attempts")
 
     async def connect(self, db_path='ygg.db'):
         """Connect to the database."""
-        if self.connection is None:
-            self.connection = await aiosqlite.connect(db_path)
-            self.connection.row_factory = sqlite3.Row
+        self.db_path = db_path
+        await self._ensure_connection()
 
     async def close(self):
         """Close the database connection."""
-        if self.connection:
-            await self.connection.close()
-            self.connection = None
+        async with self._connection_lock:
+            if self.connection:
+                try:
+                    await self.connection.close()
+                except (aiosqlite.OperationalError, sqlite3.OperationalError):
+                    pass  # Connection may already be closed
+                self.connection = None
+
+    async def _execute_with_retry(self, operation):
+        """Execute database operation with automatic retry on connection failure."""
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                await self._ensure_connection()
+                return await operation()
+            except (aiosqlite.OperationalError, sqlite3.OperationalError) as e:
+                print(f"[DB] Operation failed (attempt {attempt + 1}): {e}")
+                if attempt < max_retries - 1:
+                    # Force reconnection on next attempt
+                    try:
+                        await self.connection.close()
+                    except (aiosqlite.OperationalError, sqlite3.OperationalError):
+                        pass  # Connection may already be broken
+                    self.connection = None
+                    await asyncio.sleep(0.5 * (attempt + 1))
+                else:
+                    raise
 
     async def setup_db(self):
         """Create the DB file and initial tables if they don't exist."""
-        await self.connect() 
-        try:
+        async def _setup_operation():
             async with self.connection.cursor() as cursor:
                 # Create tables
                 await cursor.execute("""
@@ -114,6 +177,9 @@ class dbClient:
                 )
                 """)
                 await self.connection.commit()
+        
+        try:
+            await self._execute_with_retry(_setup_operation)
             print("Database setup completed successfully.")
         except Exception as e:
             print(f"Error during database setup: {e}")
@@ -300,34 +366,40 @@ class dbClient:
         """
         Fetch all games with active timers (timer_running = true).
         """
-        query = """
-        SELECT game_id, remaining_time, timer_default
-        FROM gameTimers
-        WHERE timer_running = true
-        """
-        async with self.connection.cursor() as cursor:
-            await cursor.execute(query)
-            return await cursor.fetchall()
+        async def _operation():
+            query = """
+            SELECT game_id, remaining_time, timer_default
+            FROM gameTimers
+            WHERE timer_running = true
+            """
+            async with self.connection.cursor() as cursor:
+                await cursor.execute(query)
+                return await cursor.fetchall()
+        
+        return await self._execute_with_retry(_operation)
 
 
     async def update_timer(self, game_id, remaining_time, timer_running):
         """
         Update the remaining time and running status of a timer.
         """
-        query = """
-        UPDATE gameTimers
-        SET remaining_time = :remaining_time,
-            timer_running = :timer_running
-        WHERE game_id = :game_id
-        """
-        params = {
-            "remaining_time": remaining_time,
-            "timer_running": timer_running,
-            "game_id": game_id,
-        }
-        async with self.connection.cursor() as cursor:
-            await cursor.execute(query, params)
-            await self.connection.commit()
+        async def _operation():
+            query = """
+            UPDATE gameTimers
+            SET remaining_time = :remaining_time,
+                timer_running = :timer_running
+            WHERE game_id = :game_id
+            """
+            params = {
+                "remaining_time": remaining_time,
+                "timer_running": timer_running,
+                "game_id": game_id,
+            }
+            async with self.connection.cursor() as cursor:
+                await cursor.execute(query, params)
+                await self.connection.commit()
+        
+        return await self._execute_with_retry(_operation)
 
     async def reset_timer_for_new_turn(self, game_id: int):
         """
@@ -746,16 +818,19 @@ class dbClient:
     
     async def get_game_info(self, game_id):
         """Fetch all info about a specific game."""
-        query = '''
-        SELECT * FROM games WHERE game_id = :game_id;
-        '''
-        async with self.connection.cursor() as cursor:
-            await cursor.execute(query, {"game_id": game_id})
-            row = await cursor.fetchone()
-            if row:
-                columns = [column[0] for column in cursor.description]
-                return dict(zip(columns, row))
-            return None
+        async def _operation():
+            query = '''
+            SELECT * FROM games WHERE game_id = :game_id;
+            '''
+            async with self.connection.cursor() as cursor:
+                await cursor.execute(query, {"game_id": game_id})
+                row = await cursor.fetchone()
+                if row:
+                    columns = [column[0] for column in cursor.description]
+                    return dict(zip(columns, row))
+                return None
+        
+        return await self._execute_with_retry(_operation)
 
 
 
@@ -815,4 +890,135 @@ class dbClient:
             await cursor.execute(query, {"game_id": game_id})
             result = await cursor.fetchone()
             return result[0] if result else None
+
+    async def get_active_games_count(self):
+        """Get the count of active games."""
+        async def _operation():
+            query = "SELECT COUNT(*) FROM games WHERE game_active = 1;"
+            async with self.connection.cursor() as cursor:
+                await cursor.execute(query)
+                result = await cursor.fetchone()
+                return result[0] if result else 0
+        
+        return await self._execute_with_retry(_operation)
+
+    async def increment_player_extensions(self, game_id: int, player_id: str):
+        """Increment the extension count for a player in a specific game."""
+        async def _operation():
+            # First get current player data
+            query = """
+            SELECT extensions FROM players 
+            WHERE game_id = :game_id AND player_id = :player_id AND currently_claimed = 1
+            """
+            async with self.connection.cursor() as cursor:
+                await cursor.execute(query, {"game_id": game_id, "player_id": player_id})
+                player_entry = await cursor.fetchone()
+                
+                if player_entry:
+                    # Update extensions count
+                    update_query = """
+                    UPDATE players 
+                    SET extensions = :extensions 
+                    WHERE game_id = :game_id AND player_id = :player_id AND currently_claimed = 1
+                    """
+                    await cursor.execute(update_query, {
+                        "extensions": player_entry[0] + 1,
+                        "game_id": game_id,
+                        "player_id": player_id
+                    })
+                    await self.connection.commit()
+                    return True
+                return False
+        
+        return await self._execute_with_retry(_operation)
+
+    async def get_player_by_game_and_user(self, game_id: int, player_id: str):
+        """Get player data for a specific game and user."""
+        async def _operation():
+            query = """
+            SELECT extensions FROM players 
+            WHERE game_id = :game_id AND player_id = :player_id AND currently_claimed = 1
+            """
+            async with self.connection.cursor() as cursor:
+                await cursor.execute(query, {"game_id": game_id, "player_id": player_id})
+                return await cursor.fetchone()
+        
+        return await self._execute_with_retry(_operation)
+
+    async def get_players_for_nation_selection(self, game_id: int):
+        """Get all players in a game for nation selection UI."""
+        async def _operation():
+            query = """
+            SELECT player_id, nation FROM players 
+            WHERE game_id = :game_id AND currently_claimed = 1
+            """
+            async with self.connection.cursor() as cursor:
+                await cursor.execute(query, {"game_id": game_id})
+                rows = await cursor.fetchall()
+                
+                # Convert to list of dicts for easier access
+                result = []
+                for row in rows:
+                    result.append({
+                        'player_id': row[0],
+                        'nation': row[1]
+                    })
+                return result
+        
+        return await self._execute_with_retry(_operation)
+
+    async def update_game_direct(self, game_id: int, updates: dict):
+        """Update multiple game fields at once with a dictionary of updates."""
+        if not updates:
+            return False
+        
+        # Define allowed column names to prevent SQL injection
+        ALLOWED_COLUMNS = {
+            'game_name', 'game_era', 'game_map', 'game_mods', 'game_active',
+            'game_running', 'process_pid', 'game_owner', 'creation_version',
+            'game_type', 'game_winner', 'channel_id', 'role_id', 'timer_default'
+        }
+        
+        # Validate all column names against allowlist
+        invalid_columns = set(updates.keys()) - ALLOWED_COLUMNS
+        if invalid_columns:
+            raise ValueError(f"Invalid column names: {', '.join(invalid_columns)}")
+            
+        async def _operation():
+            # Build dynamic UPDATE query with validated column names
+            set_clauses = [f"{key} = :{key}" for key in updates.keys()]
+            query = f"""
+            UPDATE games 
+            SET {', '.join(set_clauses)}
+            WHERE game_id = :game_id
+            """
+            
+            # Add game_id to parameters
+            params = {**updates, 'game_id': game_id}
+            
+            async with self.connection.cursor() as cursor:
+                await cursor.execute(query, params)
+                await self.connection.commit()
+                return True
+        
+        return await self._execute_with_retry(_operation)
+
+    async def get_players_by_ids(self, game_id: int, player_ids: list):
+        """Get all players for a game that match the provided player IDs."""
+        if not player_ids:
+            return []
+            
+        async def _operation():
+            # Create placeholders for IN clause
+            placeholders = ','.join('?' * len(player_ids))
+            query = f"""
+            SELECT player_id FROM players 
+            WHERE game_id = ? AND player_id IN ({placeholders})
+            """
+            
+            async with self.connection.cursor() as cursor:
+                await cursor.execute(query, [game_id] + player_ids)
+                return await cursor.fetchall()
+        
+        return await self._execute_with_retry(_operation)
 

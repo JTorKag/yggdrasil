@@ -3,6 +3,8 @@
 import time 
 import asyncio
 import discord
+import sqlite3
+import aiosqlite
 
 class TimerManager:
     def __init__(self, db_instance, nidhogg, config, discord_bot):
@@ -14,7 +16,8 @@ class TimerManager:
         self.config = config
         self.discord_bot = discord_bot  # Add discord_bot to TimerManager
         self.running = True
-        self.error_logged = False
+        self.error_count = 0
+        self.last_error_time = 0
 
     async def start_timers(self):
         """
@@ -56,10 +59,38 @@ class TimerManager:
                         # Update the timer in the database
                         await self.db_instance.update_timer(game_id, new_remaining_time, True)
 
+            except (aiosqlite.OperationalError, sqlite3.OperationalError) as e:
+                # Database connection issues - try to recover
+                current_time = time.time()
+                if current_time - self.last_error_time > 60:  # Log at most once per minute
+                    print(f"[ERROR] TimerManager database error: {e}")
+                    print("[INFO] Attempting to recover database connection...")
+                    self.last_error_time = current_time
+                self.error_count += 1
+                
+                # Exponential backoff for severe connection issues
+                if self.error_count > 5:
+                    sleep_time = min(30, 2 ** min(self.error_count - 5, 4))  # Cap at 30 seconds
+                    print(f"[WARNING] Multiple database errors, sleeping for {sleep_time}s")
+                    await asyncio.sleep(sleep_time)
+                else:
+                    await asyncio.sleep(5)  # Short delay before retry
+                continue
+                
             except Exception as e:
-                if not self.error_logged:
-                    print(f"[ERROR] TimerManager encountered an issue: {e}")
-                    self.error_logged = True
+                # Other unexpected errors
+                current_time = time.time()
+                if current_time - self.last_error_time > 60:  # Log at most once per minute
+                    print(f"[ERROR] TimerManager encountered unexpected error: {e}")
+                    self.last_error_time = current_time
+                self.error_count += 1
+                await asyncio.sleep(5)
+                continue
+            
+            # Reset error count on successful iteration
+            if self.error_count > 0:
+                self.error_count = 0
+                print("[INFO] TimerManager recovered from errors")
 
             # Wait 1 second between updates
             await asyncio.sleep(1)

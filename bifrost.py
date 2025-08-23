@@ -10,6 +10,25 @@ import zipfile
 from pathlib import Path
 import shutil
 import subprocess
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+
+_CHMOD_EXECUTOR: ThreadPoolExecutor | None = None
+
+def _get_executor() -> ThreadPoolExecutor:
+    global _CHMOD_EXECUTOR
+    if _CHMOD_EXECUTOR is None:
+        _CHMOD_EXECUTOR = ThreadPoolExecutor(max_workers=os.cpu_count() or 4)
+    return _CHMOD_EXECUTOR
+
+def _shutdown_executor():
+    """Shutdown the thread pool executor if it exists."""
+    global _CHMOD_EXECUTOR
+    if _CHMOD_EXECUTOR is not None:
+        print("[bifrost] Shutting down thread pool executor...")
+        _CHMOD_EXECUTOR.shutdown(wait=True)
+        _CHMOD_EXECUTOR = None
+        print("[bifrost] Thread pool executor shut down")
 
 
 class bifrost:
@@ -18,10 +37,14 @@ class bifrost:
 
     @staticmethod
     def load_config():
-        """Loads the 'config.json' file as a JSON object.
+        """Loads the 'config.json' file as a JSON object with validation.
 
         Returns:
-            dict or None: Parsed JSON object from the config file, or None if an error occurs.
+            dict: Parsed and validated JSON object from the config file.
+            
+        Raises:
+            ValueError: If configuration is missing required fields or has invalid values.
+            FileNotFoundError: If config file doesn't exist.
         """
         # Get the directory of the current script        
         # Combine it with the relative path to 'config.json'
@@ -29,10 +52,51 @@ class bifrost:
         
         try:
             with open(config_path, 'r', encoding='utf-8') as file:
-                return json.load(file)
+                config = json.load(file)
+        except FileNotFoundError:
+            raise FileNotFoundError(f"Configuration file not found: {config_path}")
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid JSON in config file {config_path}: {e}")
         except Exception as e:
-            print(f"Error loading config file {config_path}: {e}")
-            return None
+            raise RuntimeError(f"Error reading config file {config_path}: {e}")
+        
+        # Validate required configuration fields
+        required_fields = {
+            'bot_token': str,
+            'guild_id': int,
+            'category_id': int,
+            'bot_channels': list,
+            'game_admin_role_id': int,
+            'dom_data_folder': str,
+            'backup_data_folder': str,
+            'dominions_folder': str
+        }
+        
+        for field, expected_type in required_fields.items():
+            if field not in config:
+                raise ValueError(f"Missing required configuration field: {field}")
+            
+            if not isinstance(config[field], expected_type):
+                raise ValueError(f"Configuration field '{field}' must be of type {expected_type.__name__}, got {type(config[field]).__name__}")
+        
+        # Validate paths exist
+        path_fields = ['dom_data_folder', 'backup_data_folder', 'dominions_folder']
+        for field in path_fields:
+            path = Path(config[field])
+            if not path.exists():
+                print(f"Warning: Path does not exist: {config[field]} (will be created if needed)")
+        
+        # Validate dominions binary exists
+        dom_binary = Path(config['dominions_folder']) / 'dom6_amd64'
+        if not dom_binary.exists():
+            raise ValueError(f"Dominions binary not found: {dom_binary}")
+        
+        # Validate bot_channels is not empty
+        if not config['bot_channels']:
+            raise ValueError("bot_channels cannot be empty")
+        
+        print("[CONFIG] Configuration validated successfully")
+        return config
         
     @staticmethod
     def parse_ygg_metadata(file_path):
@@ -265,44 +329,6 @@ class bifrost:
             print(f"Error during restoration for game '{game_name}': {e}")
             raise e
 
-    @staticmethod
-    async def force_game_host(game_id: int, config: dict, db_instance):
-        """
-        Writes a `domcmd` file to the live game folder to automatically start the game.
-
-        Args:
-            game_id (int): The ID of the game.
-            config (dict): Configuration dictionary containing the 'dom_data_folder'.
-
-        Raises:
-            Exception: If there are issues writing the file or locating the required paths.
-        """
-        try:
-            # Get paths from the configuration
-            dom_data_folder = config.get("dom_data_folder")
-            if not dom_data_folder:
-                raise ValueError("Configuration missing 'dom_data_folder'.")
-            
-
-            game_details = await db_instance.get_game_info(game_id)
-
-            # Path to the game's live savedgames directory
-            savedgames_path = Path(dom_data_folder) / "savedgames" / game_details.get("game_name")
-
-            if not savedgames_path.exists():
-                raise FileNotFoundError(f"Savedgames directory not found for game ID {game_id} at {savedgames_path}.")
-
-            # Path to the domcmd file
-            domcmd_path = savedgames_path / "domcmd"
-
-            # Write the `settimeleft 5` command to the domcmd file
-            with open(domcmd_path, "w", encoding="utf-8") as domcmd_file:
-                domcmd_file.write("settimeleft 5")
-
-            print(f"`domcmd` file created successfully for game ID {game_id} at {domcmd_path}.")
-        except Exception as e:
-            print(f"Error in force_game_host for game ID {game_id}: {e}")
-            raise e
 
     @staticmethod
     async def read_stats_file(game_id: int, db_instance, config:dict):
@@ -469,11 +495,16 @@ class bifrost:
 
         print(f"Restoration for game ID {game_id} (turn {turn_number}) completed. Deleting backup folder...")
 
-        # Remove the backup folder using rm -rf for reliability
+        # Remove the backup folder using shutil (safer than subprocess)
         try:
-            subprocess.run(["rm", "-rf", str(backup_folder)], check=True)
+            # Validate that backup_folder is within expected directory structure
+            backup_data_folder = Path(config.get("backup_data_folder"))
+            if not backup_folder.is_relative_to(backup_data_folder):
+                raise ValueError(f"Backup folder path is outside expected directory: {backup_folder}")
+            
+            shutil.rmtree(backup_folder)
             print(f"Backup folder {backup_folder} deleted successfully.")
-        except subprocess.CalledProcessError as e:
+        except (OSError, ValueError) as e:
             raise RuntimeError(f"Failed to delete backup folder {backup_folder}: {e}")
 
 
@@ -581,95 +612,88 @@ class bifrost:
 
 
     @staticmethod
-    def load_config():
-        """Loads the 'config.json' file as a JSON object."""
-        config_path = os.path.join(os.path.dirname(__file__), "config.json")
-        try:
-            with open(config_path, 'r', encoding='utf-8') as file:
-                return json.load(file)
-        except Exception as e:
-            print(f"Error loading config file {config_path}: {e}")
-            return None
-
-    @staticmethod
-    def remove_execution_permission(path: str):
+    def remove_execution_permission(path: str) -> None:
         """
-        Remove execute permissions from a single file.
+        Clear all execute bits on *path*.  Does nothing if the file is already
+        non-executable.  Safe to call from multiple threads.
         """
-        if not os.path.exists(path):
-            print(f"File {path} does not exist. Skipping.")
-            return
-
         try:
-            if os.path.isdir(path):
-                # Skip directories entirely
-                return
+            st = os.stat(path, follow_symlinks=False)
+        except FileNotFoundError:
+            return  # vanished between event and chmod
 
-            # Remove execute permissions for files
-            st = os.stat(path)
-            new_mode = st.st_mode & ~stat.S_IXUSR & ~stat.S_IXGRP & ~stat.S_IXOTH
-            os.chmod(path, new_mode)
-        except Exception as e:
-            raise e
+        if stat.S_ISDIR(st.st_mode):
+            return  # skip directories
 
+        new_mode = st.st_mode & ~(stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        if new_mode != st.st_mode:           # only call chmod when needed
+            try:
+                os.chmod(path, new_mode, follow_symlinks=False)
+            except PermissionError as exc:
+                print(f"[bifrost] chmod failed on {path}: {exc}")
 
 
     @staticmethod
     def remove_execution_permission_recursive(folder_path: str):
         """
-        Remove execute permissions from files within a folder and all its contents.
-        Provide a summarized report at the end and only log failures per item.
+        Remove execute permissions from files within *folder_path* and all
+        sub-directories.  Logs a short summary at the end.
         """
         total_files = 0
         failed_items = []
 
         try:
             for root, dirs, files in os.walk(folder_path, topdown=False):
-                # Process files
+                # files
                 for file_name in files:
-                    file_path = os.path.join(root, file_name)
+                    fp = os.path.join(root, file_name)
                     try:
-                        bifrost.remove_execution_permission(file_path)
+                        bifrost.remove_execution_permission(fp)
                         total_files += 1
                     except PermissionError:
-                        failed_items.append({"type": "file", "path": file_path, "error": "Permission denied"})
-                    except Exception as e:
-                        failed_items.append({"type": "file", "path": file_path, "error": str(e)})
+                        failed_items.append(
+                            {"type": "file", "path": fp, "error": "Permission denied"}
+                        )
+                    except Exception as exc:
+                        failed_items.append(
+                            {"type": "file", "path": fp, "error": str(exc)}
+                        )
 
-                # Ensure directories retain their permissions
+                # keep directory perms sensible
                 for dir_name in dirs:
-                    dir_path = os.path.join(root, dir_name)
+                    dp = os.path.join(root, dir_name)
                     try:
-                        st = os.stat(dir_path)
-                        new_mode = st.st_mode | stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR
-                        os.chmod(dir_path, new_mode)
+                        st = os.stat(dp)
+                        os.chmod(dp, st.st_mode | stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
                     except PermissionError:
-                        failed_items.append({"type": "directory", "path": dir_path, "error": "Permission denied"})
-                    except Exception as e:
-                        failed_items.append({"type": "directory", "path": dir_path, "error": str(e)})
+                        failed_items.append(
+                            {"type": "directory", "path": dp, "error": "Permission denied"}
+                        )
+                    except Exception as exc:
+                        failed_items.append(
+                            {"type": "directory", "path": dp, "error": str(exc)}
+                        )
 
-            # Ensure the root folder retains its permissions
+            # root folder itself
             try:
                 st = os.stat(folder_path)
-                new_mode = st.st_mode | stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR
-                os.chmod(folder_path, new_mode)
+                os.chmod(folder_path, st.st_mode | stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
             except PermissionError:
-                failed_items.append({"type": "directory", "path": folder_path, "error": "Permission denied"})
-            except Exception as e:
-                failed_items.append({"type": "directory", "path": folder_path, "error": str(e)})
+                failed_items.append(
+                    {"type": "directory", "path": folder_path, "error": "Permission denied"}
+                )
+            except Exception as exc:
+                failed_items.append(
+                    {"type": "directory", "path": folder_path, "error": str(exc)}
+                )
 
-            # Summarized report
-            print(f"Execution permissions removed from files:")
-            print(f"  Total files processed: {total_files}")
-
+            print(f"[bifrost] chmod removed from {total_files} files")
             if failed_items:
-                print("\nItems that failed to process:")
+                print("[bifrost] items that failed:")
                 for item in failed_items:
-                    print(f"  [{item['type'].capitalize()}] {item['path']}: {item['error']}")
-            else:
-                print("  All items processed successfully.")
-        except Exception as e:
-            print(f"Error processing folder {folder_path}: {e}")
+                    print(f"  {item['type']}  {item['path']}: {item['error']}")
+        except Exception as exc:
+            print(f"[bifrost] Error processing folder {folder_path}: {exc}")
 
 
 
@@ -692,42 +716,74 @@ class bifrost:
         except Exception as e:
             print(f"Error setting folder permissions for {folder_path}: {e}")
 
+    # ------------------------------------------------------------------
+    # Efficient watchdog  –  debounce + thread-offload
+    # ------------------------------------------------------------------
+    class _PermissionHandler(FileSystemEventHandler):
+        """
+        Debounces *.2h* file events and runs remove_execution_permission()
+        in a thread-pool so the asyncio loop never blocks.
+        """
+        _DEBOUNCE_SEC = 0.5
+
+        def __init__(self, loop: asyncio.AbstractEventLoop):
+            super().__init__()
+            self._loop = loop
+            self._pending: set[str] = set()
+            self._flush_handle: asyncio.TimerHandle | None = None
+
+        # watchdog callbacks -------------------------------------------
+        def on_created(self, event):
+            if not event.is_directory and event.src_path.endswith(".2h"):
+                self._queue(event.src_path)
+
+        def on_modified(self, event):
+            if not event.is_directory and event.src_path.endswith(".2h"):
+                self._queue(event.src_path)
+
+        # debounce machinery ------------------------------------------
+        def _queue(self, path: str):
+            self._pending.add(path)
+            if self._flush_handle is None:        # first event in the burst
+                self._flush_handle = self._loop.call_later(
+                    self._DEBOUNCE_SEC, self._flush
+                )
+
+        def _flush(self):
+            paths = list(self._pending)
+            self._pending.clear()
+            self._flush_handle = None
+            asyncio.ensure_future(self._chmod_paths(paths), loop=self._loop)
+
+        async def _chmod_paths(self, paths: list[str]):
+            loop = self._loop
+            ex = _get_executor()
+            await asyncio.gather(
+                *(loop.run_in_executor(ex,
+                                       bifrost.remove_execution_permission,
+                                       p)
+                  for p in paths)
+            )
+
     @staticmethod
-    def watch_folder(folder_path: str):
+    def watch_folder(folder_path: str,
+                     *,
+                     loop: asyncio.AbstractEventLoop | None = None):
         """
-        Monitor a folder for changes and remove execution permissions for newly added files.
-
-        Args:
-            folder_path (str): The path to the folder to watch.
+        Start a watchdog.Observer that strips execute bits from new or modified
+        *.2h files in *folder_path* and its sub-directories.
+        Returns the Observer so callers can stop/join it.
         """
-        class PermissionHandler(FileSystemEventHandler):
-            def on_created(self, event):
-                if not event.is_directory:
-                    bifrost.remove_execution_permission(event.src_path)
+        if loop is None:
+            loop = asyncio.get_event_loop()
 
-            def on_modified(self, event):
-                if event.is_directory:
-                    return  # Skip directories
+        observer = Observer()
+        handler = bifrost._PermissionHandler(loop)
+        observer.schedule(handler, folder_path, recursive=True)
+        observer.start()
+        print(f"[bifrost] Watching {folder_path} for *.2h changes…")
+        return observer
 
-                # Ensure the file exists before handling it
-                if os.path.exists(event.src_path):
-                    try:
-                        bifrost.remove_execution_permission(event.src_path)
-                    except Exception as e:
-                        print(f"Error handling modified event for {event.src_path}: {e}")
-                else:
-                    print(f"File {event.src_path} does not exist. Skipping event.")
-
-
-        try:
-            observer = Observer()
-            handler = PermissionHandler()
-            observer.schedule(handler, folder_path, recursive=True)
-            observer.start()
-            print(f"Watching for changes in: {folder_path}")
-            return observer  # Return the observer to manage its lifecycle
-        except Exception as e:
-            print(f"Error watching folder {folder_path}: {e}")
 
     @staticmethod
     def initialize_dom_data_folder(config):
@@ -754,7 +810,7 @@ class bifrost:
         return observer
 
     @staticmethod
-    def handle_map_upload(file_data: bytes, filename: str, config: dict) -> dict:
+    async def handle_map_upload(file_data: bytes, filename: str, config: dict) -> dict:
         """
         Handles the upload and extraction of a map zip file from raw binary data.
 
@@ -790,7 +846,7 @@ class bifrost:
                 return {"success": False, "error": f"A folder named '{zip_file_path.stem}' already exists in the maps folder."}
 
             # Extract the zip file into the extraction folder
-            bifrost.safe_extract_zip(str(zip_file_path), str(extract_folder))
+            await bifrost.safe_extract_zip(str(zip_file_path), str(extract_folder))
 
             # Return success with extracted path
             return {"success": True, "extracted_path": str(extract_folder)}
@@ -802,7 +858,7 @@ class bifrost:
         
 
     @staticmethod
-    def handle_mod_upload(file_data: bytes, filename: str, config: dict) -> dict:
+    async def handle_mod_upload(file_data: bytes, filename: str, config: dict) -> dict:
         """
         Handles the upload and extraction of a mod zip file from raw binary data.
 
@@ -838,7 +894,7 @@ class bifrost:
                 return {"success": False, "error": f"A folder named '{zip_file_path.stem}' already exists in the mods folder."}
 
             # Extract the zip file into the extraction folder
-            bifrost.safe_extract_zip(str(zip_file_path), str(extract_folder))
+            await bifrost.safe_extract_zip(str(zip_file_path), str(extract_folder))
 
             # Return success with extracted path
             return {"success": True, "extracted_path": str(extract_folder)}
@@ -851,28 +907,49 @@ class bifrost:
 
 
     @staticmethod
-    def safe_extract_zip(zip_path: str, extract_to: str):
+    async def safe_extract_zip(zip_path: str, extract_to: str):
         """
         Extract a zip file and ensure directories and files have proper permissions.
         """
         try:
             # Ensure the extraction directory exists and is writable
             os.makedirs(extract_to, exist_ok=True)
-            os.chmod(extract_to, 0o755)  # Ensure the folder is accessible
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(_get_executor(), os.chmod, extract_to, 0o755)
 
-            # Extract the zip file
+            # Extract the zip file with path traversal protection
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                # Validate all paths before extraction
+                extract_to_resolved = Path(extract_to).resolve()
+                for member in zip_ref.namelist():
+                    # Resolve the full extraction path
+                    member_path = (extract_to_resolved / member).resolve()
+                    
+                    # Check if the resolved path is within the extraction directory
+                    if not member_path.is_relative_to(extract_to_resolved):
+                        raise ValueError(f"Unsafe path in ZIP file: {member} (resolves to {member_path})")
+                    
+                    # Check for dangerous path components
+                    if ".." in member or member.startswith("/") or ":" in member:
+                        raise ValueError(f"Dangerous path in ZIP file: {member}")
+                
+                # Safe to extract now
                 zip_ref.extractall(extract_to)
             print(f"Extracted {zip_path} to {extract_to}")
 
             # Ensure directories are writable and executable
+            chmod_tasks = []
             for root, dirs, files in os.walk(extract_to):
                 for dir_name in dirs:
                     dir_path = os.path.join(root, dir_name)
-                    os.chmod(dir_path, 0o755)  # Set read, write, and execute permissions for directories
+                    chmod_tasks.append(loop.run_in_executor(_get_executor(), os.chmod, dir_path, 0o755))
                 for file_name in files:
                     file_path = os.path.join(root, file_name)
-                    os.chmod(file_path, 0o644)  # Set read and write permissions for files
+                    chmod_tasks.append(loop.run_in_executor(_get_executor(), os.chmod, file_path, 0o644))
+            
+            # Execute all chmod operations in parallel
+            if chmod_tasks:
+                await asyncio.gather(*chmod_tasks)
 
             # Remove execute permissions from files
             bifrost.remove_execution_permission_recursive(extract_to)
@@ -919,7 +996,7 @@ class bifrost:
     #         print(f"Error ensuring screen permissions: {e}")
 
     @staticmethod
-    def set_executable_permission(file_path: str):
+    async def set_executable_permission(file_path: str):
         """
         Set executable permission for the specified file.
 
@@ -931,17 +1008,70 @@ class bifrost:
             st = os.stat(file_path)
             
             # Set the executable bit for the owner, group, and others
-            os.chmod(file_path, st.st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(
+                _get_executor(), 
+                os.chmod, 
+                file_path, 
+                st.st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
+            )
             
             print(f"Executable permission set for: {file_path}")
         except Exception as e:
             print(f"Error setting executable permission for {file_path}: {e}")
 
+    @staticmethod
+    async def get_valid_nations_from_files(game_id: int, config: dict, db_instance):
+        """Get valid nations from .2h files for a specific game."""
+        try:
+            # Get the game info to find the game name
+            game_info = await db_instance.get_game_info(game_id)
+            if not game_info:
+                return []
+            
+            game_name = game_info['game_name']
+            dom_data_folder = config.get("dom_data_folder")
+            if not dom_data_folder:
+                return []
+            
+            # Get .2h files for this game
+            nation_files = await bifrost.get_2h_files_by_game_id(game_id, db_instance, config)
+            valid_nations = [os.path.splitext(os.path.basename(nation_file))[0] for nation_file in nation_files]
+            return valid_nations
+            
+        except Exception as e:
+            print(f"Error getting valid nations from files: {e}")
+            return []
+
+    @staticmethod
+    async def get_nations_from_2h_files(game_name: str, config: dict):
+        """Get valid nations from .2h files by game name."""
+        try:
+            dom_data_folder = config.get("dom_data_folder")
+            if not dom_data_folder:
+                return []
+                
+            savedgames_folder = os.path.join(dom_data_folder, "savedgames", game_name)
+            if not os.path.isdir(savedgames_folder):
+                return []
+            
+            files = [
+                f for f in os.listdir(savedgames_folder)
+                if os.path.isfile(os.path.join(savedgames_folder, f)) and f.endswith(".2h")
+            ]
+            
+            valid_nations = [os.path.basename(file).replace(".2h", "") for file in files]
+            return valid_nations
+            
+        except Exception as e:
+            print(f"Error getting nations from 2h files: {e}")
+            return []
+
 
 
     @staticmethod
-    def read_file(filepath: str) -> Optional[str]:
-        """Reads the contents of a file.
+    async def read_file(filepath: str) -> Optional[str]:
+        """Reads the contents of a file asynchronously.
 
         Args:
             filepath (str): Path to the file to read.
@@ -950,15 +1080,20 @@ class bifrost:
             Optional[str]: The contents of the file, or None if an error occurs.
         """
         try:
-            with open(filepath, 'r', encoding='utf-8') as file:
-                return file.read()
+            loop = asyncio.get_event_loop()
+            # Use thread executor for file I/O to avoid blocking
+            def _read_file():
+                with open(filepath, 'r', encoding='utf-8') as file:
+                    return file.read()
+            
+            return await loop.run_in_executor(_get_executor(), _read_file)
         except Exception as e:
             print(f"Error reading file {filepath}: {e}")
             return None
 
     @staticmethod
-    def write_file(filepath: str, content: str) -> bool:
-        """Writes content to a file.
+    async def write_file(filepath: str, content: str) -> bool:
+        """Writes content to a file asynchronously.
 
         Args:
             filepath (str): Path to the file to write.
@@ -968,9 +1103,14 @@ class bifrost:
             bool: True if the operation was successful, False otherwise.
         """
         try:
-            with open(filepath, 'w', encoding='utf-8') as file:
-                file.write(content)
-            return True
+            loop = asyncio.get_event_loop()
+            # Use thread executor for file I/O to avoid blocking
+            def _write_file():
+                with open(filepath, 'w', encoding='utf-8') as file:
+                    file.write(content)
+                return True
+            
+            return await loop.run_in_executor(_get_executor(), _write_file)
         except Exception as e:
             print(f"Error writing to file {filepath}: {e}")
             return False
@@ -1028,27 +1168,3 @@ class bifrost:
         except Exception as e:
             print(f"Error deleting file {filepath}: {e}")
             return False
-
-# # Example usage (to be removed or commented out in production):
-# if __name__ == "__main__":
-#     # Test the functionality
-#     test_dir = "test_files"
-#     test_file = os.path.join(test_dir, "example.txt")
-
-#     # Create a directory
-#     bifrost.create_directory(test_dir)
-
-#     # Write to a file
-#     bifrost.write_file(test_file, "Hello, Bifrost!")
-
-#     # Read from a file
-#     content = bifrost.read_file(test_file)
-#     print(f"File content: {content}")
-
-#     # List files in the directory
-#     files = bifrost.list_files(test_dir)
-#     print(f"Files in directory: {files}")
-
-#     # Delete the file
-#     bifrost.delete_file(test_file)
-#     print(f"File deleted: {test_file not in os.listdir(test_dir)}")

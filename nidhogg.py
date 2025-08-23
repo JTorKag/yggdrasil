@@ -2,15 +2,13 @@
 
 from pathlib import Path
 import subprocess
-import json
 import re
 import os
 import stat
-import threading
 import asyncio
-from bifrost import bifrost
 import signal
 import shlex
+from bifrost import bifrost
 
 class nidhogg:
     # Load configuration and set Dominions folder path
@@ -128,6 +126,10 @@ class nidhogg:
 
             command.append("--statfile")
 
+            # Validate game_id is safe for use in screen command
+            if not isinstance(game_id, int) or game_id <= 0:
+                raise ValueError(f"Invalid game_id: {game_id}")
+            
             # Prepare the screen command
             screen_name = f"dom_{game_id}"
             screen_command = ["screen", "-dmS", screen_name] + command
@@ -135,12 +137,17 @@ class nidhogg:
             print(shlex.join(screen_command))
 
             # Launch the screen session
-            screen_process = subprocess.Popen(
-                screen_command,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                stdin=subprocess.DEVNULL,
-            )
+            try:
+                screen_process = subprocess.Popen(
+                    screen_command,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    stdin=subprocess.DEVNULL,
+                    timeout=30  # 30 second timeout for process launch
+                )
+            except subprocess.TimeoutExpired:
+                print(f"Timeout launching screen session for game {game_id}")
+                return False
             print(f"Screen process launched with PID: {screen_process.pid}")
             #print(" ".join(screen_command))  # Debug output to verify command
 
@@ -150,7 +157,10 @@ class nidhogg:
 
             # Retrieve the PID of the `dom6_amd64` process
             try:
-                result = subprocess.check_output(["screen", "-ls", screen_name]).decode("utf-8")
+                result = subprocess.check_output(
+                    ["screen", "-ls", screen_name], 
+                    timeout=10  # 10 second timeout
+                ).decode("utf-8")
                 actual_pid = None
                 for line in result.splitlines():
                     if f"{screen_name}" in line:
@@ -172,6 +182,9 @@ class nidhogg:
             except subprocess.CalledProcessError as e:
                 print(f"Error retrieving screen session: {e}")
                 return False
+            except subprocess.TimeoutExpired:
+                print(f"Timeout retrieving screen session for game {game_id}")
+                return False
 
         except Exception as e:
             print(f"Error launching game lobby: {e}")
@@ -183,7 +196,7 @@ class nidhogg:
     @staticmethod
     async def force_game_host(game_id: int, config: dict, db_instance):
         """
-        Calls Bifrost's force_game_host to write the domcmd file.
+        Writes a `domcmd` file to the live game folder to automatically start the game.
 
         Args:
             game_id (int): The game ID.
@@ -194,10 +207,31 @@ class nidhogg:
             Exception: If any error occurs during the execution.
         """
         try:
-            await bifrost.force_game_host(game_id, config, db_instance)
-            print(f"Force host operation completed for game ID {game_id}.")
+            # Get paths from the configuration
+            dom_data_folder = config.get("dom_data_folder")
+            if not dom_data_folder:
+                raise ValueError("Configuration missing 'dom_data_folder'.")
+
+            game_details = await db_instance.get_game_info(game_id)
+            if not game_details:
+                raise ValueError(f"No game found with ID {game_id}")
+
+            # Path to the game's live savedgames directory
+            savedgames_path = Path(dom_data_folder) / "savedgames" / game_details.get("game_name")
+
+            if not savedgames_path.exists():
+                raise FileNotFoundError(f"Savedgames directory not found for game ID {game_id} at {savedgames_path}.")
+
+            # Path to the domcmd file
+            domcmd_path = savedgames_path / "domcmd"
+
+            # Write the `settimeleft 5` command to the domcmd file
+            with open(domcmd_path, "w", encoding="utf-8") as domcmd_file:
+                domcmd_file.write("settimeleft 5")
+
+            print(f"Force host operation completed for game ID {game_id} at {domcmd_path}.")
         except Exception as e:
-            print(f"Error in Nidhogg's force_game_host: {e}")
+            print(f"Error in force_game_host for game ID {game_id}: {e}")
             raise e
 
 
@@ -244,7 +278,8 @@ class nidhogg:
                 [str(nidhogg.dominions_folder / "dom6_amd64"), "--version"],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True
+                text=True,
+                timeout=15  # 15 second timeout for version check
             )
 
             # Check for errors in the command execution
@@ -258,6 +293,8 @@ class nidhogg:
             else:
                 return "Version information not found in output."
 
+        except subprocess.TimeoutExpired:
+            return "Timeout while fetching version - Dominions executable may be unresponsive"
         except Exception as e:
             return f"Exception while fetching version: {e}"
 
@@ -298,7 +335,8 @@ class nidhogg:
                 command,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True
+                text=True,
+                timeout=20  # 20 second timeout for game queries
             )
 
             # Check for errors
@@ -309,6 +347,10 @@ class nidhogg:
             #print(f"Game query response: {result.stdout.strip()}")
             return result.stdout.strip()
 
+        except subprocess.TimeoutExpired:
+            error_msg = f"Timeout querying game {game_id} - Dominions process may be hanging"
+            print(error_msg)
+            raise RuntimeError(error_msg)
         except Exception as e:
             print(f"Error querying game status: {e}")
             raise e

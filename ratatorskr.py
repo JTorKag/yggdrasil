@@ -894,30 +894,12 @@ class discordClient(discord.Client):
                     return
 
                 # Check if the requester is a player
-                is_player = False
-                async with self.db_instance.connection.cursor() as cursor:
-                    query = """
-                    SELECT player_id FROM players
-                    WHERE game_id = :game_id AND player_id = :player_id
-                    """
-                    await cursor.execute(query, {"game_id": game_id, "player_id": str(interaction.user.id)})
-                    player_entry = await cursor.fetchone()
-                    is_player = bool(player_entry)
+                player_entry = await self.db_instance.get_player_by_game_and_user(game_id, str(interaction.user.id))
+                is_player = bool(player_entry)
 
                 # If the requester is a player (even if they are also an admin or owner), update their extensions
                 if is_player and hours > 0:
-                    async with self.db_instance.connection.cursor() as cursor:
-                        update_query = """
-                        UPDATE players
-                        SET extensions = COALESCE(extensions, 0) + :added_time
-                        WHERE game_id = :game_id AND player_id = :player_id
-                        """
-                        await cursor.execute(update_query, {
-                            "game_id": game_id,
-                            "player_id": str(interaction.user.id),
-                            "added_time": hours * 3600
-                        })
-                        await self.db_instance.connection.commit()
+                    await self.db_instance.increment_player_extensions(game_id, str(interaction.user.id))
 
                 # Calculate new remaining time
                 added_seconds = hours * 3600
@@ -958,16 +940,9 @@ class discordClient(discord.Client):
 
             try:
                 # Fetch all players and their extensions for the given game
-                async with self.db_instance.connection.cursor() as cursor:
-                    query = """
-                    SELECT player_id, extensions
-                    FROM players
-                    WHERE game_id = :game_id
-                    """
-                    await cursor.execute(query, {"game_id": game_id})
-                    rows = await cursor.fetchall()
-
-                if not rows:
+                players_in_game = await self.db_instance.get_players_in_game(game_id)
+                
+                if not players_in_game:
                     await interaction.followup.send("No players found for this game.")
                     return
 
@@ -979,7 +954,9 @@ class discordClient(discord.Client):
                 )
 
                 guild = interaction.guild
-                for player_id, extensions in rows:
+                for player in players_in_game:
+                    player_id = player['player_id']
+                    extensions = player['extensions']
                     # Resolve the player's Discord username
                     member = guild.get_member(int(player_id))
                     display_name = member.display_name if member else f"Unknown (ID: {player_id})"
@@ -1025,15 +1002,8 @@ class discordClient(discord.Client):
                 new_default_timer = hours * 3600
 
                 # Update the timer_default in the database
-                query = """
-                UPDATE gameTimers
-                SET timer_default = :new_default_timer
-                WHERE game_id = :game_id
-                """
-                params = {"new_default_timer": new_default_timer, "game_id": game_id}
-                async with self.db_instance.connection.cursor() as cursor:
-                    await cursor.execute(query, params)
-                    await self.db_instance.connection.commit()
+                # Update the default timer using the database method
+                await self.db_instance.update_game_direct(game_id, {"timer_default": new_default_timer})
 
                 await interaction.followup.send(
                     f"Default timer for game ID {game_id} has been updated to {hours} hours."
@@ -1306,8 +1276,7 @@ class discordClient(discord.Client):
 
             # Get the 2h files and validate the claimed nation
             try:
-                nation_files = await bifrost.get_2h_files_by_game_id(game_id, self.db_instance, self.config)
-                valid_nations = [os.path.splitext(os.path.basename(nation_file))[0] for nation_file in nation_files]
+                valid_nations = await bifrost.get_valid_nations_from_files(game_id, self.config, self.db_instance)
 
                 if nation_name not in valid_nations:
                     await interaction.followup.send(f"{nation_name} is not a valid nation for this game.")
@@ -1372,9 +1341,8 @@ class discordClient(discord.Client):
                 if not game_id:
                     return []
 
-                # Retrieve the list of `.2h` files for the game
-                files = await bifrost.get_2h_files_by_game_id(game_id, self.db_instance, self.config)
-                valid_nations = [os.path.basename(file).replace(".2h", "") for file in files]
+                # Retrieve the list of valid nations for the game
+                valid_nations = await bifrost.get_valid_nations_from_files(game_id, self.config, self.db_instance)
 
                 # Filter the nations by the current input
                 filtered_nations = [nation for nation in valid_nations if current.lower() in nation.lower()]
@@ -1482,9 +1450,8 @@ class discordClient(discord.Client):
             try:
                 print(f"Fetching pretenders for game ID: {game_id}")
                 
-                # Get the `.2h` files
-                nation_files = await bifrost.get_2h_files_by_game_id(game_id, self.db_instance, self.config)
-                valid_nations = [os.path.splitext(os.path.basename(nation_file))[0] for nation_file in nation_files]
+                # Get the valid nations
+                valid_nations = await bifrost.get_valid_nations_from_files(game_id, self.config, self.db_instance)
 
                 # Build the response
                 embed = discord.Embed(title="Pretender Nations", color=discord.Color.blue())
@@ -1836,19 +1803,14 @@ class discordClient(discord.Client):
 
             # Fetch players for the game
             try:
-                query = """
-                SELECT player_id
-                FROM players
-                WHERE game_id = :game_id
-                """
-                async with self.db_instance.connection.cursor() as cursor:
-                    await cursor.execute(query, {"game_id": game_id})
-                    players = await cursor.fetchall()  # List of (player_id,)
+                # Fetch players for the game using the database method
+                players_in_game = await self.db_instance.get_players_in_game(game_id)
 
                 # Map player_id to usernames
                 guild = interaction.guild
                 options = []
-                for (player_id,) in players:
+                for player in players_in_game:
+                    player_id = player['player_id']
                     member = guild.get_member(int(player_id))
                     if member:
                         display_name = member.display_name
@@ -1953,7 +1915,7 @@ class discordClient(discord.Client):
 
             # Attempt to write the domcmd file to force hosting
             try:
-                await bifrost.force_game_host(game_id, self.config, self.db_instance)
+                await self.nidhogg.force_game_host(game_id, self.config, self.db_instance)
                 await interaction.followup.send(f"Game ID {game_id} ({game_info['game_name']}) has been successfully forced to host. Please wait while turn proceeses.")
                 print(f"Game ID {game_id} ({game_info['game_name']}) successfully forced to host.")
             except Exception as e:
@@ -2039,7 +2001,7 @@ class discordClient(discord.Client):
                 file_data = await file.read()
 
                 # Pass the file data, filename, and config to bifrost
-                result = bifrost.handle_map_upload(file_data, file.filename, self.config)
+                result = await bifrost.handle_map_upload(file_data, file.filename, self.config)
 
                 # Handle the result
                 if result["success"]:
@@ -2067,7 +2029,7 @@ class discordClient(discord.Client):
                 file_data = await file.read()
 
                 # Pass the file data, filename, and config to bifrost
-                result = bifrost.handle_mod_upload(file_data, file.filename, self.config)
+                result = await bifrost.handle_mod_upload(file_data, file.filename, self.config)
 
                 # Handle the result
                 if result["success"]:
