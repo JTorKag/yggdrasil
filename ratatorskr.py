@@ -331,6 +331,7 @@ class discordClient(discord.Client):
             interaction: discord.Interaction,
             game_name: str,
             game_type: str,
+            default_timer: float,
             game_era: str,
             research_random: str,
             global_slots: int,
@@ -373,6 +374,14 @@ class discordClient(discord.Client):
                 if points_to_win < 1 or points_to_win > lv1_thrones + lv2_thrones * 2 + lv3_thrones * 3:
                     await interaction.followup.send("Invalid points to win.", ephemeral=True)
                     return
+
+                # Calculate timer value based on game type (blitz vs normal)
+                if game_type.lower() == "blitz":
+                    timer_seconds = int(default_timer * 60)  # Minutes for blitz games
+                    timer_unit = "minutes"
+                else:
+                    timer_seconds = int(default_timer * 3600)  # Hours for normal games  
+                    timer_unit = "hours"
 
                 # Fetch guild and category
                 guild = interaction.client.get_guild(self.guild_id)
@@ -430,9 +439,9 @@ class discordClient(discord.Client):
                     # Create the timer for the new game
                     await self.db_instance.create_timer(
                         game_id=new_game_id,
-                        timer_default=86400,  # 24 hours default
+                        timer_default=timer_seconds,  # Based on default_timer parameter and game type
                         timer_running=False,  # Not running initially
-                        remaining_time=86400  # Full remaining time initially
+                        remaining_time=timer_seconds  # Full remaining time initially
                     )
 
                     await interaction.followup.send(f"Game '{game_name}' created successfully!", ephemeral=True)
@@ -830,26 +839,12 @@ class discordClient(discord.Client):
             try:
                 await self.nidhogg.force_game_host(game_id, self.config, self.db_instance)
                 await self.nidhogg.force_game_host(game_id, self.config, self.db_instance)
-                await interaction.followup.send(f"Game ID {game_id} has been successfully started. Please wait a few seconds before trying to connect.")
+                await interaction.followup.send(f"Game start command has been executed for game ID {game_id}. Please wait until turn 1 notice before joining game.")
             except Exception as e:
                 await interaction.followup.send(f"Failed to force the game to start: {e}")
                 return
 
-            # Set game started to true
-            try:
-                await self.db_instance.set_game_started_value(game_id, True)
-                print(f"Game ID {game_id} has been marked as started.")
-            except Exception as e:
-                await interaction.followup.send(f"Failed to set game started state in the database: {e}")
-                return
-            
-            # Set timer_running to true
-            try:
-                await self.db_instance.set_timer_running(game_id, True)
-                print(f"Timer for game ID {game_id} has been started.")
-            except Exception as e:
-                await interaction.followup.send(f"Failed to start the timer for game ID {game_id}: {e}")
-                return
+            # NOTE: game_started and timer will be set to True when turn 1 notification is sent (actual game start)
 
 
 

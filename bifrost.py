@@ -520,7 +520,7 @@ class bifrost:
 
             # Create the turn-specific backup folder
             turn_backup_folder = backup_folder / f"turn_{int(turn_number) + 1}"  # +1 since stats.txt reflects the last completed turn
-            turn_backup_folder.mkdir(parents=True, exist_ok=True)
+            turn_backup_folder.mkdir(parents=True, exist_ok=True, mode=0o755)
 
             # Copy files excluding .d6m and .map
             for file_path in savedgames_folder.iterdir():
@@ -615,6 +615,11 @@ class bifrost:
         # Path to the mods folder
         mods_folder = os.path.join(dom_data_folder, "mods")
 
+        # Create mods folder if it doesn't exist
+        if not os.path.exists(mods_folder):
+            os.makedirs(mods_folder, mode=0o755, exist_ok=True)
+            print(f"[bifrost] Created missing mods folder: {mods_folder}")
+
         try:
             # Use scandir for efficient directory listing
             with os.scandir(mods_folder) as entries:
@@ -664,6 +669,11 @@ class bifrost:
 
         # Path to the maps folder
         maps_folder = os.path.join(dom_data_folder, "maps")
+
+        # Create maps folder if it doesn't exist
+        if not os.path.exists(maps_folder):
+            os.makedirs(maps_folder, mode=0o755, exist_ok=True)
+            print(f"[bifrost] Created missing maps folder: {maps_folder}")
 
         try:
             # Use scandir for efficient directory listing
@@ -839,14 +849,16 @@ class bifrost:
             asyncio.ensure_future(self._chmod_paths(paths), loop=self._loop)
 
         async def _chmod_paths(self, paths: list[str]):
-            loop = self._loop
-            ex = _get_executor()
-            await asyncio.gather(
-                *(loop.run_in_executor(ex,
-                                       bifrost.remove_execution_permission,
-                                       p)
-                  for p in paths)
-            )
+            # DISABLED: File watching chmod operations (was sudo workaround)
+            # loop = self._loop
+            # ex = _get_executor()
+            # await asyncio.gather(
+            #     *(loop.run_in_executor(ex,
+            #                            bifrost.remove_execution_permission,
+            #                            p)
+            #       for p in paths)
+            # )
+            print(f"[bifrost] Skipped chmod for {len(paths)} watched files")
 
     @staticmethod
     def watch_folder(folder_path: str,
@@ -881,11 +893,12 @@ class bifrost:
             print("Error: 'dom_data_folder' not found in the config.")
             return
 
-        # Remove execution permissions recursively
-        bifrost.remove_execution_permission_recursive(dom_data_folder)
+        # DISABLED: Remove execution permissions recursively (was sudo workaround)
+        # bifrost.remove_execution_permission_recursive(dom_data_folder)
 
-        # Set the folder to restrict executable permissions for new files
-        bifrost.set_folder_no_exec(dom_data_folder)
+        # DISABLED: Set the folder to restrict executable permissions for new files (was sudo workaround)  
+        # bifrost.set_folder_no_exec(dom_data_folder)
+        print("[bifrost] Disabled recursive chmod operations for non-sudo operation")
 
         # Watch the folder for new files
         observer = bifrost.watch_folder(dom_data_folder)
@@ -912,7 +925,7 @@ class bifrost:
                 return {"success": False, "error": "Configuration error: dom_data_folder is not set."}
 
             maps_folder = Path(dom_data_folder) / "maps"
-            maps_folder.mkdir(parents=True, exist_ok=True)  # Ensure the maps folder exists
+            maps_folder.mkdir(parents=True, exist_ok=True, mode=0o755)  # Ensure the maps folder exists
 
             # Save the binary data as a zip file
             zip_file_path = maps_folder / filename
@@ -960,7 +973,7 @@ class bifrost:
                 return {"success": False, "error": "Configuration error: dom_data_folder is not set."}
 
             mods_folder = Path(dom_data_folder) / "mods"
-            mods_folder.mkdir(parents=True, exist_ok=True)  # Ensure the mods folder exists
+            mods_folder.mkdir(parents=True, exist_ok=True, mode=0o755)  # Ensure the mods folder exists
 
             # Save the binary data as a zip file
             zip_file_path = mods_folder / filename
@@ -1020,22 +1033,23 @@ class bifrost:
                 zip_ref.extractall(extract_to)
             print(f"Extracted {zip_path} to {extract_to}")
 
-            # Ensure directories are writable and executable
-            chmod_tasks = []
-            for root, dirs, files in os.walk(extract_to):
-                for dir_name in dirs:
-                    dir_path = os.path.join(root, dir_name)
-                    chmod_tasks.append(loop.run_in_executor(_get_executor(), os.chmod, dir_path, 0o755))
-                for file_name in files:
-                    file_path = os.path.join(root, file_name)
-                    chmod_tasks.append(loop.run_in_executor(_get_executor(), os.chmod, file_path, 0o644))
-            
-            # Execute all chmod operations in parallel
-            if chmod_tasks:
-                await asyncio.gather(*chmod_tasks)
+            # DISABLED: Mass chmod operations (was sudo workaround)
+            # chmod_tasks = []
+            # for root, dirs, files in os.walk(extract_to):
+            #     for dir_name in dirs:
+            #         dir_path = os.path.join(root, dir_name)
+            #         chmod_tasks.append(loop.run_in_executor(_get_executor(), os.chmod, dir_path, 0o755))
+            #     for file_name in files:
+            #         file_path = os.path.join(root, file_name)
+            #         chmod_tasks.append(loop.run_in_executor(_get_executor(), os.chmod, file_path, 0o644))
+            # 
+            # # Execute all chmod operations in parallel
+            # if chmod_tasks:
+            #     await asyncio.gather(*chmod_tasks)
 
-            # Remove execute permissions from files
-            bifrost.remove_execution_permission_recursive(extract_to)
+            # DISABLED: Remove execute permissions from files (was sudo workaround)
+            # bifrost.remove_execution_permission_recursive(extract_to)
+            print(f"[bifrost] Extracted {zip_path} without chmod operations")
 
             # Delete the zip file after extraction
             os.remove(zip_path)

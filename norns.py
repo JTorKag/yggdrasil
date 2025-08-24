@@ -41,6 +41,9 @@ class TimerManager:
                     # Check for turn transitions (lobby → turn 1)
                     await self.check_turn_transition(game_id)
 
+                    # Check if screen session is still alive
+                    await self.check_screen_session_alive(game_id, game_info)
+
                     # Decrement the remaining time
                     new_remaining_time = max(0, remaining_time - 1)
 
@@ -221,6 +224,10 @@ class TimerManager:
             else:
                 remaining_time = 3600  # Default 1 hour if no timer info
 
+            # Mark game as started (this is the true game start - lobby -> turn 1)
+            await self.db_instance.set_game_started_value(game_id, True)
+            print(f"[DEBUG] Game ID {game_id} marked as started (turn 1 reached)")
+
             # Calculate Discord timestamp
             from datetime import datetime, timedelta, timezone
             current_time = datetime.now(timezone.utc)
@@ -256,3 +263,94 @@ class TimerManager:
 
         except Exception as e:
             print(f"[ERROR] Error sending game start notification for game ID {game_id}: {e}")
+
+    async def check_screen_session_alive(self, game_id, game_info):
+        """
+        Check if the screen session for a game is still alive.
+        If dead, notify Discord and update database.
+        """
+        try:
+            import subprocess
+            from pathlib import Path
+            
+            screen_name = f"dom_{game_id}"
+            
+            # Check if screen session exists
+            try:
+                result = subprocess.check_output(
+                    ["screen", "-ls", screen_name],
+                    stderr=subprocess.STDOUT,
+                    timeout=5
+                ).decode("utf-8")
+                
+                # If we get here, screen session exists
+                return
+                
+            except subprocess.CalledProcessError:
+                # Screen session doesn't exist - it died
+                print(f"[ERROR] Screen session {screen_name} is dead for game ID {game_id}")
+                
+                # Update database to reflect game is no longer running
+                await self.db_instance.update_game_running(game_id, False)
+                await self.db_instance.set_timer_running(game_id, False)
+                
+                # Get error from log file
+                dom_data_folder = self.config.get("dom_data_folder", ".")
+                game_name = game_info.get("game_name", "unknown")
+                log_file = Path(dom_data_folder) / "savedgames" / game_name / "dominions_error.log"
+                
+                # Import nidhogg to read error log
+                error_msg = await self.nidhogg._read_error_log(log_file)
+                
+                # Send Discord notification
+                await self.send_game_death_notification(game_id, game_info, error_msg)
+                
+        except Exception as e:
+            print(f"[ERROR] Error checking screen session for game ID {game_id}: {e}")
+
+    async def send_game_death_notification(self, game_id, game_info, error_msg):
+        """
+        Send a Discord notification when a game dies unexpectedly.
+        """
+        try:
+            # Get the Discord channel
+            channel_id = game_info.get("channel_id")
+            if not channel_id:
+                print(f"[ERROR] No channel ID found for dead game ID {game_id}")
+                return
+
+            channel = self.discord_bot.get_channel(int(channel_id))
+            if not channel:
+                channel = await self.discord_bot.fetch_channel(int(channel_id))
+            if not channel:
+                print(f"[ERROR] Discord channel not found for dead game ID {game_id}")
+                return
+
+            # Get the associated role for pinging
+            associated_role_id = game_info.get("role_id")
+            role_mention = ""
+            if associated_role_id:
+                role_mention = f"<@&{associated_role_id}>"
+
+            # Create embed for game death
+            import discord
+            embed = discord.Embed(
+                title="⚠️ Game Process Died",
+                description=(
+                    f"Game ID {game_id} has stopped running unexpectedly.\n"
+                    f"**Error**: {error_msg}\n\n"
+                    f"The game will need to be restarted."
+                ),
+                color=discord.Color.red()
+            )
+
+            # Send message with role ping
+            if role_mention:
+                await channel.send(content=role_mention, embed=embed)
+            else:
+                await channel.send(embed=embed)
+            
+            print(f"[DEBUG] Game death notification sent for game ID {game_id}")
+
+        except Exception as e:
+            print(f"[ERROR] Error sending game death notification for game ID {game_id}: {e}")

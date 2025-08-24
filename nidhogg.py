@@ -127,7 +127,14 @@ class nidhogg:
                 command.append("--teamgame")
 
             command.append("--statfile")
-            command.append("--statusdump")
+            
+            # Only use --statusdump for games that haven't started yet (to detect lobby -> turn 1 transition)
+            # This prevents PNG file creation for restarted games
+            if not game_details.get("game_started", False):
+                command.append("--statusdump")
+                print(f"[DEBUG] Added --statusdump flag for non-started game {game_id}")
+            else:
+                print(f"[DEBUG] Skipped --statusdump flag for already-started game {game_id}")
 
             # Validate game_id is safe for use in screen command
             if not isinstance(game_id, int) or game_id <= 0:
@@ -137,22 +144,34 @@ class nidhogg:
             screen_name = f"dom_{game_id}"
             screen_command = ["screen", "-dmS", screen_name] + command
 
-            print(shlex.join(screen_command))
+            print(f"[DEBUG] Base command: {shlex.join(command)}")
 
             # Create log file inside the game's savedgames folder
             dom_data_folder = config.get("dom_data_folder", ".")
             savedgames_path = Path(dom_data_folder) / "savedgames" / game_name
-            savedgames_path.mkdir(parents=True, exist_ok=True)  # Ensure directory exists
+            savedgames_path.mkdir(parents=True, exist_ok=True, mode=0o755)  # Ensure directory exists with proper permissions
+            
+            # Explicitly set permissions to ensure they're correct
+            os.chmod(savedgames_path, 0o755)
+            
+            # Debug: Check actual permissions
+            actual_perms = oct(savedgames_path.stat().st_mode)[-3:]
+            print(f"[DEBUG] Created {savedgames_path} with permissions: {actual_perms}")
+            
             log_file = savedgames_path / "dominions_error.log"
             
-            # Launch the screen session with logging
-            with open(log_file, "w") as log:
-                screen_process = subprocess.Popen(
-                    screen_command,
-                    stdout=log,
-                    stderr=subprocess.STDOUT,  # Redirect stderr to stdout (log file)
-                    stdin=subprocess.DEVNULL
-                )
+            # Launch the screen session with logging using screen's built-in logging
+            # Use screen's -L flag to log to a file, and redirect output to our log file
+            screen_command_with_log = ["screen", "-dmS", screen_name, "-L", "-Logfile", str(log_file)] + command
+            
+            print(f"[DEBUG] Screen command with logging: {shlex.join(screen_command_with_log)}")
+            
+            screen_process = subprocess.Popen(
+                screen_command_with_log,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL
+            )
             print(f"Screen process launched with PID: {screen_process.pid}")
             print(f"Logging to: {log_file}")
             #print(" ".join(screen_command))  # Debug output to verify command
@@ -185,6 +204,17 @@ class nidhogg:
                 # Update the database with the correct PID
                 await db_instance.update_process_pid(game_id, actual_pid)
                 await db_instance.update_game_running(game_id, True)
+
+                # Wait a bit more and check if process is still running (catch early failures)
+                await asyncio.sleep(2)
+                try:
+                    os.kill(actual_pid, 0)  # Check if process still exists
+                except (ProcessLookupError, OSError):
+                    # Process died shortly after starting - check for errors
+                    error_msg = await nidhogg._read_error_log(log_file)
+                    print(f"Process {actual_pid} died shortly after starting")
+                    print(f"Error log: {error_msg}")
+                    raise RuntimeError(f"Game failed to start: {error_msg}")
 
                 return True
 
@@ -230,6 +260,18 @@ class nidhogg:
 
             if not savedgames_path.exists():
                 raise FileNotFoundError(f"Savedgames directory not found for game ID {game_id} at {savedgames_path}.")
+
+            # Delete .png files created by --statusdump flag
+            png_files = list(savedgames_path.glob("*.png"))
+            for png_file in png_files:
+                try:
+                    png_file.unlink()
+                    print(f"[DEBUG] Deleted statusdump PNG file: {png_file.name}")
+                except Exception as e:
+                    print(f"[WARNING] Could not delete PNG file {png_file.name}: {e}")
+            
+            if png_files:
+                print(f"[DEBUG] Cleaned up {len(png_files)} PNG files from statusdump")
 
             # Path to the domcmd file
             domcmd_path = savedgames_path / "domcmd"
@@ -385,7 +427,7 @@ class nidhogg:
 
     @staticmethod
     async def _read_error_log(log_file):
-        """Read the last few lines of the error log to get meaningful error messages."""
+        """Read the error log and extract only meaningful error messages."""
         try:
             if not log_file.exists():
                 return "No log file found"
@@ -396,30 +438,57 @@ class nidhogg:
             if not lines:
                 return "Log file is empty"
                 
-            # Get last 10 lines, filter out empty lines
-            relevant_lines = [line.strip() for line in lines[-10:] if line.strip()]
+            # Filter out useless lines
+            filtered_lines = []
+            useless_patterns = [
+                "Setup port",
+                "seconds, open:",
+                "kdialog: not found",
+                "zenity: not found", 
+                "Error: Can't open display:",
+                "sh: 1:"
+            ]
             
-            # Look for common error patterns
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                    
+                # Skip useless lines
+                is_useless = any(pattern in line for pattern in useless_patterns)
+                if is_useless:
+                    continue
+                    
+                filtered_lines.append(line)
+            
+            # Look for actual error patterns - prioritize most recent errors
             error_indicators = [
                 "Map specified by --mapfile was not found",
                 "Can't find mod:",
                 "Något gick fel!",
                 "Error:",
                 "Failed to",
-                "Could not"
+                "Could not",
+                "No such file or directory",
+                "Permission denied"
             ]
             
-            # Find lines with error indicators
+            # Find lines with error indicators, working backwards from end (most recent first)
             error_lines = []
-            for line in relevant_lines:
+            for line in reversed(filtered_lines):  # Start from end of file
                 for indicator in error_indicators:
                     if indicator in line:
                         error_lines.append(line)
+                        break  # Only add each line once
                         
             if error_lines:
-                return " | ".join(error_lines[:3])  # Return first 3 error lines
+                # Reverse back to chronological order but prioritize most recent
+                error_lines.reverse()
+                return " | ".join(error_lines[-3:])  # Return last 3 error lines (most recent)
+            elif filtered_lines:
+                return " | ".join(filtered_lines[-3:])  # Return last 3 meaningful lines
             else:
-                return " | ".join(relevant_lines[-3:])  # Return last 3 lines
+                return "No meaningful errors found in log"
                 
         except Exception as e:
             return f"Could not read log file: {e}"
