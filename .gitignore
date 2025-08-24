@@ -23,3 +23,7 @@ config.json
 
 # remove notes for full release
 notes/
+.claude
+
+#other
+ratatorskr_original.py

@@ -153,6 +153,14 @@ class dbClient:
                 columns = [row[1] for row in await cursor.fetchall()]
                 if "game_winner" not in columns:
                     await cursor.execute("ALTER TABLE games ADD COLUMN game_winner INTEGER DEFAULT NULL;")
+                if "player_control_timers" not in columns:
+                    await cursor.execute("ALTER TABLE games ADD COLUMN player_control_timers BOOLEAN DEFAULT 1;")
+                if "chess_clock_active" not in columns:
+                    await cursor.execute("ALTER TABLE games ADD COLUMN chess_clock_active BOOLEAN DEFAULT 0;")
+                if "chess_clock_starting_time" not in columns:
+                    await cursor.execute("ALTER TABLE games ADD COLUMN chess_clock_starting_time INTEGER DEFAULT NULL;")
+                if "chess_clock_per_turn_time" not in columns:
+                    await cursor.execute("ALTER TABLE games ADD COLUMN chess_clock_per_turn_time INTEGER DEFAULT NULL;")
 
                 # Create the `players` table
                 await cursor.execute("""
@@ -176,6 +184,12 @@ class dbClient:
                     FOREIGN KEY (game_id) REFERENCES games (game_id)
                 )
                 """)
+                
+                # Add chess_clock_time_remaining column to players table if it doesn't exist
+                await cursor.execute("PRAGMA table_info(players)")
+                player_columns = [row[1] for row in await cursor.fetchall()]
+                if "chess_clock_time_remaining" not in player_columns:
+                    await cursor.execute("ALTER TABLE players ADD COLUMN chess_clock_time_remaining INTEGER DEFAULT 0;")
                 await self.connection.commit()
         
         try:
@@ -231,6 +245,10 @@ class dbClient:
         process_pid: int = None,
         game_owner: str = None,
         game_winner: int = None,
+        player_control_timers: bool = True,
+        chess_clock_active: bool = False,
+        chess_clock_starting_time: int = None,
+        chess_clock_per_turn_time: int = None,
         ):
         """Insert a new game into the games table, with a limit on active games."""
 
@@ -267,14 +285,16 @@ class dbClient:
             resources, recruitment, supplies, masterpass, startprov, renaming, scoregraphs, noartrest,
             nolvl9rest, teamgame, clustered, edgestart, story_events, ai_level, no_going_ai, conqall, thrones,
             requiredap, cataclysm, game_running, channel_id, role_id, game_active, process_pid, game_owner,
-            creation_date, creation_version, game_started, game_type, game_winner
+            creation_date, creation_version, game_started, game_type, game_winner, player_control_timers,
+            chess_clock_active, chess_clock_starting_time, chess_clock_per_turn_time
         ) VALUES (
             :game_name, :game_port, :game_era, :game_map, :game_mods, :research_rate, :research_random,
             :hall_of_fame, :merc_slots, :global_slots, :indie_str, :magicsites, :eventrarity, :richness,
             :resources, :recruitment, :supplies, :masterpass, :startprov, :renaming, :scoregraphs, :noartrest,
             :nolvl9rest, :teamgame, :clustered, :edgestart, :story_events, :ai_level, :no_going_ai, :conqall, :thrones,
             :requiredap, :cataclysm, :game_running, :channel_id, :role_id, :game_active, :process_pid, :game_owner,
-            CURRENT_TIMESTAMP, :creation_version, :game_started, :game_type, :game_winner
+            CURRENT_TIMESTAMP, :creation_version, :game_started, :game_type, :game_winner, :player_control_timers,
+            :chess_clock_active, :chess_clock_starting_time, :chess_clock_per_turn_time
         );
         '''
         params = {
@@ -320,7 +340,11 @@ class dbClient:
             "game_owner": game_owner,
             "creation_version": creation_version,
             "game_started": game_started,
-            "game_winner": game_winner
+            "game_winner": game_winner,
+            "player_control_timers": player_control_timers,
+            "chess_clock_active": chess_clock_active,
+            "chess_clock_starting_time": chess_clock_starting_time,
+            "chess_clock_per_turn_time": chess_clock_per_turn_time
         }
 
 
@@ -1037,6 +1061,32 @@ class dbClient:
             async with self.connection.cursor() as cursor:
                 await cursor.execute(query, [game_id] + player_ids)
                 return await cursor.fetchall()
+        
+        return await self._execute_with_retry(_operation)
+
+    async def get_player_chess_clock_time(self, game_id: int, player_id: str) -> int:
+        """Get a player's remaining chess clock time."""
+        async def _operation():
+            async with self.connection.cursor() as cursor:
+                await cursor.execute(
+                    "SELECT chess_clock_time_remaining FROM players WHERE game_id = ? AND player_id = ? LIMIT 1",
+                    (game_id, player_id)
+                )
+                result = await cursor.fetchone()
+                return result[0] if result else 0
+        
+        return await self._execute_with_retry(_operation)
+
+    async def update_player_chess_clock_time(self, game_id: int, player_id: str, time_remaining: int) -> bool:
+        """Update a player's chess clock time remaining."""
+        async def _operation():
+            async with self.connection.cursor() as cursor:
+                await cursor.execute(
+                    "UPDATE players SET chess_clock_time_remaining = ? WHERE game_id = ? AND player_id = ?",
+                    (time_remaining, game_id, player_id)
+                )
+                await self.connection.commit()
+                return cursor.rowcount > 0
         
         return await self._execute_with_retry(_operation)
 

@@ -2,7 +2,7 @@
     "bot_token":"",
     "guild_id":"",
     "category_id":"",
-    "bot_channels":[""],
+    "primary_bot_channel":[""],
     "dominions_folder":"",
     "dom_data_folder":"",
     "backup_data_folder":"",

@@ -65,7 +65,7 @@ class bifrost:
             'bot_token': str,
             'guild_id': (int, str),
             'category_id': (int, str),
-            'bot_channels': list,
+            'primary_bot_channel': list,
             'game_admin': (int, str),
             'game_host': (int, str),
             'max_active_games': int,
@@ -120,9 +120,9 @@ class bifrost:
         if not dom_binary.exists():
             raise ValueError(f"Dominions binary not found: {dom_binary}")
         
-        # Validate bot_channels is not empty
-        if not config['bot_channels']:
-            raise ValueError("bot_channels cannot be empty")
+        # Validate primary_bot_channel is not empty
+        if not config['primary_bot_channel']:
+            raise ValueError("primary_bot_channel cannot be empty")
         
         print("[CONFIG] Configuration validated successfully")
         return config
