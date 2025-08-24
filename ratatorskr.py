@@ -1137,41 +1137,71 @@ class discordClient(discord.Client):
                     color=discord.Color.green(),
                 )
 
-                # Get timer information if game is started - add as first field
-                if game_info['game_started'] and game_info['game_running']:
-                    try:
-                        timer_data = await self.db_instance.get_game_timer(game_id)
-                        if timer_data:
-                            remaining_time = timer_data["remaining_time"]
-                            timer_default = timer_data["timer_default"]
-                            timer_running = timer_data["timer_running"]
-                            
-                            # Convert seconds to readable format
-                            remaining_readable = self.descriptive_time_breakdown(remaining_time) if remaining_time else "Unknown"
-                            
-                            # Check if it's a blitz game for default timer display
-                            if game_info.get("game_type", "").lower() == "blitz":
-                                default_readable = f"{timer_default // 60} minutes" if timer_default else "Unknown"
+                # Get current turn from statusdump
+                current_turn = "Unknown"
+                try:
+                    from bifrost import bifrost
+                    status_data = await bifrost.read_statusdump_file(game_id, self.db_instance, self.config)
+                    if status_data:
+                        turn_num = status_data.get("turn", -1)
+                        if turn_num == -1:
+                            current_turn = "Lobby"
+                        else:
+                            current_turn = f"Turn {turn_num}"
+                except Exception:
+                    current_turn = "Unknown"
+
+                # Add current turn info
+                embed.add_field(
+                    name="🎯 Current Turn",
+                    value=current_turn,
+                    inline=False,
+                )
+
+                # Get timer information - show for all games
+                try:
+                    timer_data = await self.db_instance.get_game_timer(game_id)
+                    if timer_data:
+                        remaining_time = timer_data["remaining_time"]
+                        timer_default = timer_data["timer_default"]
+                        timer_running = timer_data["timer_running"]
+                        
+                        # Convert seconds to readable format
+                        remaining_readable = self.descriptive_time_breakdown(remaining_time) if remaining_time else "Unknown"
+                        
+                        # Check if it's a blitz game for default timer display
+                        if game_info.get("game_type", "").lower() == "blitz":
+                            default_readable = f"{timer_default / 60:.1f} minutes" if timer_default else "Unknown"
+                        else:
+                            hours = timer_default / 3600 if timer_default else 0
+                            if hours == int(hours):
+                                default_readable = f"{int(hours)} hours" if timer_default else "Unknown"
                             else:
-                                default_readable = f"{timer_default // 3600} hours" if timer_default else "Unknown"
-                            
-                            timer_status = "Running" if timer_running else "Paused"
-                            
-                            embed.add_field(
-                                name="⏰ Timer Status",
-                                value=(
-                                    f"**Timer Remaining**: {remaining_readable}\n"
-                                    f"**Timer Status**: {timer_status}\n"
-                                    f"**Default Timer**: {default_readable}"
-                                ),
-                                inline=False,
-                            )
-                    except Exception as e:
+                                default_readable = f"{hours:.1f} hours" if timer_default else "Unknown"
+                        
+                        timer_status = "🟢 Running" if timer_running else "🔴 Paused"
+                        
                         embed.add_field(
                             name="⏰ Timer Status",
-                            value="Error fetching timer data",
+                            value=(
+                                f"**Timer Remaining**: {remaining_readable}\n"
+                                f"**Timer Status**: {timer_status}\n"
+                                f"**Default Timer**: {default_readable}"
+                            ),
                             inline=False,
                         )
+                    else:
+                        embed.add_field(
+                            name="⏰ Timer Status",
+                            value="No timer configured",
+                            inline=False,
+                        )
+                except Exception as e:
+                    embed.add_field(
+                        name="⏰ Timer Status",
+                        value="Error fetching timer data",
+                        inline=False,
+                    )
 
                 story_events_map = {0: "None", 1: "Some", 2: "Full"}
                 
@@ -1225,41 +1255,12 @@ class discordClient(discord.Client):
                     inline=False,
                 )
 
-                # Get timer information if game is started
-                timer_info_text = ""
-                if game_info['game_started'] and game_info['game_running']:
-                    try:
-                        timer_data = await self.db_instance.get_game_timer(game_id)
-                        if timer_data:
-                            remaining_time = timer_data["remaining_time"]
-                            timer_default = timer_data["timer_default"]
-                            timer_running = timer_data["timer_running"]
-                            
-                            # Convert seconds to readable format
-                            remaining_readable = self.descriptive_time_breakdown(remaining_time) if remaining_time else "Unknown"
-                            
-                            # Check if it's a blitz game for default timer display
-                            if game_info.get("game_type", "").lower() == "blitz":
-                                default_readable = f"{timer_default // 60} minutes" if timer_default else "Unknown"
-                            else:
-                                default_readable = f"{timer_default // 3600} hours" if timer_default else "Unknown"
-                            
-                            timer_status = "Running" if timer_running else "Paused"
-                            timer_info_text = (
-                                f"**Timer Remaining**: {remaining_readable}\n"
-                                f"**Timer Status**: {timer_status}\n"
-                                f"**Default Timer**: {default_readable}\n"
-                            )
-                    except Exception as e:
-                        timer_info_text = f"**Timer Info**: Error fetching timer data\n"
-                
                 embed.add_field(
                     name="Game State",
                     value=(
                         f"**Game Running**: {'True' if game_info['game_running'] else 'False'}\n"
                         f"**Game Started**: {'True' if game_info['game_started'] else 'False'}\n"
-                        f"**Game Active**: {'True' if game_info['game_active'] else 'False'}\n"
-                        f"{timer_info_text}"
+                        f"**Game Active**: {'True' if game_info['game_active'] else 'False'}"
                     ),
                     inline=False,
                 )
@@ -2113,6 +2114,9 @@ class discordClient(discord.Client):
                 )
                 await interaction.followup.send(f"Game ID {game_id} ({game_info['game_name']}) has been successfully rolled back to the latest backup.")
                 print(f"Game ID {game_id} ({game_info['game_name']}) successfully rolled back.")
+                
+                # Send rollback notification to game channel
+                await self.send_rollback_notification(game_id, game_info)
             except FileNotFoundError as fnf_error:
                 await interaction.followup.send(f"Failed to roll back: {fnf_error}")
                 print(f"Error restoring game ID {game_id} ({game_info['game_name']}): {fnf_error}")
@@ -2525,5 +2529,79 @@ class discordClient(discord.Client):
     #     if message.author == self.user:
     #         return 
     #     print(f'Message from {message.author}: {message.content} in {message.channel}')
-    
+
+    async def send_rollback_notification(self, game_id, game_info):
+        """
+        Send a Discord notification when a game is rolled back.
+        Similar to postexec notification but for rollbacks.
+        """
+        try:
+            # Get the Discord channel
+            channel_id = game_info.get("channel_id")
+            if not channel_id:
+                print(f"[ERROR] No channel ID found for rollback notification game ID {game_id}")
+                return
+
+            channel = self.get_channel(int(channel_id))
+            if not channel:
+                channel = await self.fetch_channel(int(channel_id))
+            if not channel:
+                print(f"[ERROR] Discord channel not found for rollback notification game ID {game_id}")
+                return
+
+            # Get timer info and reset it
+            timer_info = await self.db_instance.get_game_timer(game_id)
+            if timer_info:
+                timer_default = timer_info["timer_default"]
+                await self.db_instance.update_timer(game_id, timer_default, True)
+                remaining_time = timer_default
+            else:
+                remaining_time = 3600  # Default 1 hour if no timer info
+
+            # Calculate Discord timestamp
+            from datetime import datetime, timedelta, timezone
+            current_time = datetime.now(timezone.utc)
+            future_time = current_time + timedelta(seconds=remaining_time)
+            discord_timestamp = f"<t:{int(future_time.timestamp())}:F>"
+            
+            # Get time breakdown
+            time_breakdown = self.descriptive_time_breakdown(remaining_time)
+
+            # Get current turn from stats file to show what turn we rolled back to
+            current_turn_info = "Unknown Turn"
+            try:
+                from bifrost import bifrost
+                turn_stats = await bifrost.read_stats_file(game_id, self.db_instance, self.config)
+                if turn_stats:
+                    current_turn_info = f"Turn {turn_stats.get('turn', 'Unknown')}"
+            except Exception:
+                current_turn_info = "Unknown Turn"
+
+            # Get the associated role for pinging
+            associated_role_id = game_info.get("role_id")
+            role_mention = ""
+            if associated_role_id:
+                role_mention = f"<@&{associated_role_id}>"
+
+            # Create embed for rollback
+            embed = discord.Embed(
+                title="🔄 Turn Rolled Back",
+                description=(
+                    f"The game has been rolled back to **{current_turn_info}**.\n"
+                    f"**All players must resubmit their turns.**\n\n"
+                    f"Next turn deadline:\n{discord_timestamp} in {time_breakdown}"
+                ),
+                color=discord.Color.orange()
+            )
+
+            # Send message with role ping
+            if role_mention:
+                await channel.send(content=role_mention, embed=embed)
+            else:
+                await channel.send(embed=embed)
+            
+            print(f"[DEBUG] Rollback notification sent for game ID {game_id}")
+
+        except Exception as e:
+            print(f"[ERROR] Error sending rollback notification for game ID {game_id}: {e}")
 

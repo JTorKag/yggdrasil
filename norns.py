@@ -38,8 +38,9 @@ class TimerManager:
                     if not game_info or not game_info.get("game_running", False):
                         continue  # Skip this timer if the game is not running
 
-                    # Check for turn transitions (lobby → turn 1)
-                    await self.check_turn_transition(game_id)
+                    # Only check for turn transitions on non-started games (lobby → turn 1 detection)
+                    if not game_info.get("game_started", False):
+                        await self.check_turn_transition(game_id)
 
                     # Check if screen session is still alive
                     await self.check_screen_session_alive(game_id, game_info)
@@ -179,9 +180,12 @@ class TimerManager:
             current_turn = status_data.get("turn", -1)
             last_known_turn = self.game_turns.get(game_id, -1)
             
-            # Detect lobby → turn 1 transition
-            if last_known_turn == -1 and current_turn == 1:
-                print(f"[DEBUG] Detected lobby → turn 1 transition for game ID {game_id}")
+            # Detect transitions: either exact transition or missed transition
+            if (last_known_turn == -1 and current_turn == 1) or (current_turn >= 1):
+                if last_known_turn == -1 and current_turn == 1:
+                    print(f"[DEBUG] Detected lobby → turn 1 transition for game ID {game_id}")
+                else:
+                    print(f"[DEBUG] Caught missed turn 1 transition for game ID {game_id} (current turn: {current_turn})")
                 await self.handle_game_start_notification(game_id)
             
             # Update the last known turn
