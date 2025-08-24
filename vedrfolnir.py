@@ -558,6 +558,24 @@ class dbClient:
             await self.connection.commit()
             return cursor.lastrowid
 
+    async def update_timer_default(self, game_id: int, timer_default: int):
+        """
+        Update the timer_default for a specific game.
+        """
+        async def _operation():
+            query = """
+            UPDATE gameTimers 
+            SET timer_default = :timer_default
+            WHERE game_id = :game_id
+            """
+            params = {"timer_default": timer_default, "game_id": game_id}
+            
+            async with self.connection.cursor() as cursor:
+                await cursor.execute(query, params)
+                await self.connection.commit()
+                return True
+        
+        return await self._execute_with_retry(_operation)
 
     async def add_player(self, game_id, player_id, nation):
         """Insert or update a player in the players table."""
@@ -976,7 +994,7 @@ class dbClient:
         ALLOWED_COLUMNS = {
             'game_name', 'game_era', 'game_map', 'game_mods', 'game_active',
             'game_running', 'process_pid', 'game_owner', 'creation_version',
-            'game_type', 'game_winner', 'channel_id', 'role_id', 'timer_default'
+            'game_type', 'game_winner', 'channel_id', 'role_id'
         }
         
         # Validate all column names against allowlist

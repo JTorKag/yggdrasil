@@ -63,20 +63,49 @@ class bifrost:
         # Validate required configuration fields
         required_fields = {
             'bot_token': str,
-            'guild_id': int,
-            'category_id': int,
+            'guild_id': (int, str),
+            'category_id': (int, str),
             'bot_channels': list,
-            'game_admin_role_id': int,
+            'game_admin': (int, str),
+            'game_host': (int, str),
+            'max_active_games': int,
             'dom_data_folder': str,
             'backup_data_folder': str,
-            'dominions_folder': str
+            'dominions_folder': str,
+            'dev_eviron': str
         }
+        
+        # Optional fields (used but have fallbacks)
+        optional_fields = {
+            'server_host': str
+        }
+        
+        # Discord ID fields that should be converted to int if they're strings
+        discord_id_fields = {'guild_id', 'category_id', 'game_admin', 'game_host'}
         
         for field, expected_type in required_fields.items():
             if field not in config:
                 raise ValueError(f"Missing required configuration field: {field}")
             
-            if not isinstance(config[field], expected_type):
+            # Handle tuple of allowed types (like (int, str))
+            if isinstance(expected_type, tuple):
+                if not isinstance(config[field], expected_type):
+                    type_names = [t.__name__ for t in expected_type]
+                    raise ValueError(f"Configuration field '{field}' must be of type {' or '.join(type_names)}, got {type(config[field]).__name__}")
+                
+                # Convert string Discord IDs to int
+                if field in discord_id_fields and isinstance(config[field], str):
+                    try:
+                        config[field] = int(config[field])
+                    except ValueError:
+                        raise ValueError(f"Configuration field '{field}' contains invalid numeric value: {config[field]}")
+            else:
+                if not isinstance(config[field], expected_type):
+                    raise ValueError(f"Configuration field '{field}' must be of type {expected_type.__name__}, got {type(config[field]).__name__}")
+        
+        # Validate optional fields if present
+        for field, expected_type in optional_fields.items():
+            if field in config and not isinstance(config[field], expected_type):
                 raise ValueError(f"Configuration field '{field}' must be of type {expected_type.__name__}, got {type(config[field]).__name__}")
         
         # Validate paths exist
@@ -387,6 +416,60 @@ class bifrost:
         except Exception as e:
             raise ValueError(f"Error parsing stats.txt for game ID {game_id}: {e}")
 
+    @staticmethod
+    async def read_statusdump_file(game_id: int, db_instance, config: dict):
+        """
+        Reads the statusdump file for a given game ID and extracts turn information.
+        Used primarily to detect the lobby → turn 1 transition.
+
+        Args:
+            game_id (int): The ID of the game.
+            db_instance: Database client instance to fetch game information.
+            config (dict): Configuration containing dom_data_folder.
+
+        Returns:
+            dict: A dictionary containing game name and turn number, or None if file doesn't exist.
+        """
+        try:
+            # Fetch game details from the database
+            game_info = await db_instance.get_game_info(game_id)
+            if not game_info:
+                return None
+
+            game_name = game_info.get("game_name")
+            savedgames_folder = os.path.join(config.get("dom_data_folder"), "savedgames", game_name)
+            statusdump_file_path = os.path.join(savedgames_folder, "statusdump.txt")
+
+            if not os.path.exists(statusdump_file_path):
+                return None  # File doesn't exist yet, game might still be in lobby
+
+            with open(statusdump_file_path, "r") as status_file:
+                content = status_file.read().strip()
+                
+            # Parse the statusdump content
+            # Format: "turn -1, era 1, mods 0, turnlimit 0" (lobby is turn -1, game starts at turn 1)
+            lines = content.split('\n')
+            turn_number = -1  # Default to -1 (lobby)
+            
+            for line in lines:
+                line = line.strip()
+                if line.startswith("turn "):
+                    # Extract turn number from "turn -1, era 1, ..." format
+                    parts = line.split(',')
+                    if parts:
+                        turn_part = parts[0].strip()  # "turn -1"
+                        turn_str = turn_part.replace("turn ", "").strip()
+                        turn_number = int(turn_str)
+                        break
+
+            return {
+                "game_name": game_name,
+                "turn": turn_number
+            }
+            
+        except Exception as e:
+            print(f"Error reading statusdump for game ID {game_id}: {e}")
+            return None
 
     @staticmethod
     async def backup_saved_game_files(game_id: int, db_instance, config: dict):

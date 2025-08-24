@@ -36,7 +36,7 @@ class nidhogg:
 
 
     @staticmethod
-    async def launch_game_lobby(game_id, db_instance):
+    async def launch_game_lobby(game_id, db_instance, config):
         try:
             game_details = await db_instance.get_game_info(game_id=game_id)
             if not game_details:
@@ -57,8 +57,10 @@ class nidhogg:
             no_going_ai = game_details["no_going_ai"]
             research_random = game_details["research_random"]
             teamgame = game_details["teamgame"]
-            if game_details["game_mods"]:
+            if game_details["game_mods"] and game_details["game_mods"] not in ["[]", "None", ""]:
                 game_mods = game_details["game_mods"].split(",")
+                # Filter out empty strings and invalid entries
+                game_mods = [mod.strip() for mod in game_mods if mod.strip() and mod.strip() not in ["[]", "None"]]
             else:
                 game_mods = []
 
@@ -125,6 +127,7 @@ class nidhogg:
                 command.append("--teamgame")
 
             command.append("--statfile")
+            command.append("--statusdump")
 
             # Validate game_id is safe for use in screen command
             if not isinstance(game_id, int) or game_id <= 0:
@@ -136,23 +139,26 @@ class nidhogg:
 
             print(shlex.join(screen_command))
 
-            # Launch the screen session
-            try:
+            # Create log file inside the game's savedgames folder
+            dom_data_folder = config.get("dom_data_folder", ".")
+            savedgames_path = Path(dom_data_folder) / "savedgames" / game_name
+            savedgames_path.mkdir(parents=True, exist_ok=True)  # Ensure directory exists
+            log_file = savedgames_path / "dominions_error.log"
+            
+            # Launch the screen session with logging
+            with open(log_file, "w") as log:
                 screen_process = subprocess.Popen(
                     screen_command,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    stdin=subprocess.DEVNULL,
-                    timeout=30  # 30 second timeout for process launch
+                    stdout=log,
+                    stderr=subprocess.STDOUT,  # Redirect stderr to stdout (log file)
+                    stdin=subprocess.DEVNULL
                 )
-            except subprocess.TimeoutExpired:
-                print(f"Timeout launching screen session for game {game_id}")
-                return False
             print(f"Screen process launched with PID: {screen_process.pid}")
+            print(f"Logging to: {log_file}")
             #print(" ".join(screen_command))  # Debug output to verify command
 
             # Wait for the `dom6_amd64` process to start
-            await asyncio.sleep(1)
+            await asyncio.sleep(3)  # Give it a bit more time
 
 
             # Retrieve the PID of the `dom6_amd64` process
@@ -168,8 +174,11 @@ class nidhogg:
                         break
 
                 if not actual_pid:
+                    # Process failed to start - check log file for errors
+                    error_msg = await nidhogg._read_error_log(log_file)
                     print(f"Failed to find process for screen session: {screen_name}")
-                    return False
+                    print(f"Error log: {error_msg}")
+                    raise RuntimeError(f"Game failed to start: {error_msg}")
 
                 print(f"Actual PID for game ID {game_id}: {actual_pid}")
 
@@ -230,6 +239,21 @@ class nidhogg:
                 domcmd_file.write("settimeleft 5")
 
             print(f"Force host operation completed for game ID {game_id} at {domcmd_path}.")
+            
+            # Wait a moment for the game to process the command
+            await asyncio.sleep(3)
+            
+            # Check if the game process is still alive after attempting to start
+            game_details = await db_instance.get_game_info(game_id)
+            if game_details and game_details.get("process_pid"):
+                try:
+                    # Check if process is still running
+                    os.kill(game_details["process_pid"], 0)  # Signal 0 just checks if process exists
+                except (ProcessLookupError, OSError):
+                    # Process died - try to get error from log file
+                    log_file = savedgames_path / "dominions_error.log"
+                    error_msg = await nidhogg._read_error_log(log_file)
+                    raise RuntimeError(f"Game process crashed during start: {error_msg}")
         except Exception as e:
             print(f"Error in force_game_host for game ID {game_id}: {e}")
             raise e
@@ -358,3 +382,44 @@ class nidhogg:
 
 
     ### Helpers
+
+    @staticmethod
+    async def _read_error_log(log_file):
+        """Read the last few lines of the error log to get meaningful error messages."""
+        try:
+            if not log_file.exists():
+                return "No log file found"
+            
+            with open(log_file, "r") as f:
+                lines = f.readlines()
+                
+            if not lines:
+                return "Log file is empty"
+                
+            # Get last 10 lines, filter out empty lines
+            relevant_lines = [line.strip() for line in lines[-10:] if line.strip()]
+            
+            # Look for common error patterns
+            error_indicators = [
+                "Map specified by --mapfile was not found",
+                "Can't find mod:",
+                "Något gick fel!",
+                "Error:",
+                "Failed to",
+                "Could not"
+            ]
+            
+            # Find lines with error indicators
+            error_lines = []
+            for line in relevant_lines:
+                for indicator in error_indicators:
+                    if indicator in line:
+                        error_lines.append(line)
+                        
+            if error_lines:
+                return " | ".join(error_lines[:3])  # Return first 3 error lines
+            else:
+                return " | ".join(relevant_lines[-3:])  # Return last 3 lines
+                
+        except Exception as e:
+            return f"Could not read log file: {e}"

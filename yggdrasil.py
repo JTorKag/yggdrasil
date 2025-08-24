@@ -32,7 +32,10 @@ def initialize_bot(config, db_instance, bot_ready_signal):
 
 async def handle_terminal_input(db_instance, bot_ready_signal, shutdown_signal):
     """Handles terminal input commands."""
+    print("[DEBUG] Terminal input handler starting...")
+    print("[DEBUG] Waiting for bot to be ready...")
     await bot_ready_signal.wait()
+    print("[DEBUG] Bot ready! Terminal input is now active. Type 'help' for commands.")
     while not shutdown_signal.is_set():
         try:
             user_input = await asyncio.to_thread(input, "\nEnter a command: ")
@@ -64,35 +67,20 @@ async def handle_terminal_input(db_instance, bot_ready_signal, shutdown_signal):
             break
 
 async def shutdown(discordBot, db_instance, observer, shutdown_signal, timer_manager=None):
-    """Handles graceful shutdown of services."""
-    print("\nShutting down gracefully.")
-    
-    # Stop the timer manager if it exists
-    if timer_manager:
-        await timer_manager.stop_timers()
-        print("\nTimerManager stopped.")
+    """Handles final cleanup after services have been shut down."""
+    print("[INFO] Performing final cleanup...")
     
     # Close the database connection
     await db_instance.close()
-    print("\nDB connection closed.")
-    
-    # Shut down the Discord bot
-    if discordBot.is_ready():
-        await discordBot.close()
-        print("\nBot stopped.")
+    print("DB connection closed.")
     
     # Stop the observer if it exists
     if observer:
         observer.stop()
-        print("\nStopped monitoring dom_data_folder.")
+        print("Stopped monitoring dom_data_folder.")
         observer.join()
     
-    # Shutdown thread pool executors
-    bifrost._shutdown_executor()
-    
-    # Set the shutdown signal
-    shutdown_signal.set()
-    print("\nGoodbye.")
+    print("Goodbye.")
 
 
 
@@ -128,6 +116,11 @@ async def main():
     bot_ready_signal = asyncio.Event()
     db_instance = dbClient()
     await db_instance.connect()
+    
+    # Set up database tables immediately after connection
+    await db_instance.setup_db()
+    print("[DB] Database tables initialized")
+    
     discordBot = initialize_bot(config, db_instance, bot_ready_signal)
 
     # Pass the shared db_instance to TimerManager
@@ -146,8 +139,29 @@ async def main():
 
     @discordBot.event
     async def on_ready():
-        print(f"[INFO] Discord bot reconnected as {discordBot.user}")
+        print(f"[INFO] Discord bot connected as {discordBot.user}")
         print(f"[INFO] Connected to guild: {discordBot.get_guild(config.get('guild_id'))}")
+        
+        # Sync Discord commands with timeout (set SKIP_SYNC=1 to skip)
+        if not os.getenv('SKIP_SYNC'):
+            print("Trying to sync discord bot commands")
+            try:
+                await asyncio.wait_for(
+                    discordBot.tree.sync(guild=discord.Object(id=config.get('guild_id'))),
+                    timeout=30.0  # 30 second timeout
+                )
+                print("Discord commands synced!")
+            except asyncio.TimeoutError:
+                print("Warning: Command sync timed out after 30 seconds, but continuing...")
+            except Exception as e:
+                print(f"Error syncing commands: {e}")
+        else:
+            print("Skipping command sync (SKIP_SYNC=1)")
+        
+        # Signal that bot is ready
+        if bot_ready_signal:
+            bot_ready_signal.set()
+            print("[DEBUG] Bot ready signal set!")
         
     @discordBot.event
     async def on_resumed():
@@ -156,33 +170,54 @@ async def main():
     # Define API handler and start it concurrently
     api_handler = APIHandler(discord_bot=discordBot, config=config)
 
+    # Create uvicorn server instance that we can shutdown gracefully
+    import uvicorn
+    uvicorn_config = uvicorn.Config(api_handler.app, host="127.0.0.1", port=8000, log_level="warning")
+    uvicorn_server = uvicorn.Server(uvicorn_config)
+    
     async def start_api_server():
         """
         Starts the API server using uvicorn's serve() method.
         """
-        import uvicorn
-        uvicorn_config = uvicorn.Config(api_handler.app, host="127.0.0.1", port=8000, log_level="info")
-        server = uvicorn.Server(uvicorn_config)
-        await server.serve()
+        await uvicorn_server.serve()
 
     # Set up graceful shutdown on signals
+    def handle_signal():
+        print(f"\nReceived shutdown signal")
+        shutdown_signal.set()
+    
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(
-            sig,
-            lambda: asyncio.create_task(
-                shutdown(discordBot, db_instance, observer, shutdown_signal, timer_manager)
-            )
-        )
+        loop.add_signal_handler(sig, handle_signal)
 
     # Run all components concurrently, including TimerManager
-    await asyncio.gather(
-        discordBot.start(config.get("bot_token")),
-        handle_terminal_input(db_instance, bot_ready_signal, shutdown_signal),
-        start_api_server(),
-        timer_manager.start_timers(),  # Start the TimerManager loop
-        shutdown_signal.wait()
-    )
+    tasks = [
+        asyncio.create_task(discordBot.start(config.get("bot_token"))),
+        asyncio.create_task(handle_terminal_input(db_instance, bot_ready_signal, shutdown_signal)),
+        asyncio.create_task(start_api_server()),
+        asyncio.create_task(timer_manager.start_timers()),
+    ]
+    
+    # Wait for shutdown signal
+    await shutdown_signal.wait()
+    print("\nShutdown signal received, stopping all services...")
+    
+    # Gracefully shutdown each service instead of cancelling tasks
+    print("[INFO] Shutting down API server...")
+    uvicorn_server.should_exit = True
+    await uvicorn_server.shutdown()
+    
+    print("[INFO] Shutting down Discord bot...")
+    await discordBot.close()
+    
+    print("[INFO] Shutting down TimerManager...")
+    await timer_manager.stop_timers()
+    
+    # Now wait for tasks to complete naturally
+    await asyncio.gather(*tasks, return_exceptions=True)
+    
+    # Perform final cleanup
+    await shutdown(discordBot, db_instance, observer, shutdown_signal, timer_manager)
 
     # Return instances for graceful shutdown in KeyboardInterrupt
     return discordBot, db_instance, observer, shutdown_signal, timer_manager

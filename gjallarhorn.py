@@ -113,6 +113,12 @@ class APIHandler:
                 # Use the descriptive_time_breakdown method from discord_bot
                 time_breakdown = self.discord_bot.descriptive_time_breakdown(remaining_time)
 
+                # Get the associated role for pinging
+                associated_role_id = game_info.get("role_id")
+                role_mention = ""
+                if associated_role_id:
+                    role_mention = f"<@&{associated_role_id}>"
+
                 # Create the embed
                 embed = discord.Embed(
                     title=f"Start of Turn {turn}",
@@ -123,8 +129,11 @@ class APIHandler:
                     color=discord.Color.blue()
                 )
 
-                # Send the message to the Discord channel
-                await channel.send(embed=embed)
+                # Send the message to the Discord channel with role ping
+                if role_mention:
+                    await channel.send(content=role_mention, embed=embed)
+                else:
+                    await channel.send(embed=embed)
 
                 return {"status": "success", "message": f"Notification sent and timer reset for Turn {turn}."}
 

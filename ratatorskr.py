@@ -733,7 +733,7 @@ class discordClient(discord.Client):
             print(f"Launching game {game_id}")
 
             # Attempt to launch the game lobby
-            success = await self.nidhogg.launch_game_lobby(game_id, self.db_instance)
+            success = await self.nidhogg.launch_game_lobby(game_id, self.db_instance, self.config)
             if success:
                 await interaction.followup.send(f"Game lobby launched for game {game_info['game_name']} ID: {game_id}.")
             else:
@@ -855,12 +855,12 @@ class discordClient(discord.Client):
 
         @self.tree.command(
             name="extend-timer",
-            description="Adjusts the timer for the current game by X hours (positive or negative).",
+            description="Adjusts the timer (hours for normal games, minutes for blitz games).",
             guild=discord.Object(id=self.guild_id)
         )
         @require_bot_channel(self.config)
-        async def extend_timer(interaction: discord.Interaction, hours: int):
-            """Adjusts the timer for the current game by a specified number of hours."""
+        async def extend_timer(interaction: discord.Interaction, time_value: float):
+            """Adjusts the timer for the current game by a specified amount (hours or minutes based on game type)."""
             await interaction.response.defer()
 
             # Get the game ID associated with the channel
@@ -876,7 +876,7 @@ class discordClient(discord.Client):
                     await interaction.followup.send("No timer information found for this game.")
                     return
 
-                # Fetch game info to get the game owner
+                # Fetch game info to get the game owner and determine game type
                 game_info = await self.db_instance.get_game_info(game_id)
                 game_owner_id = game_info["game_owner"]
 
@@ -887,7 +887,7 @@ class discordClient(discord.Client):
                 is_owner = str(interaction.user.id) == game_owner_id
 
                 # Disallow negative values for non-admins and non-owners
-                if hours < 0 and not (is_owner or is_admin):
+                if time_value < 0 and not (is_owner or is_admin):
                     await interaction.followup.send(
                         "Only the game owner or an admin can reduce the timer."
                     )
@@ -897,24 +897,37 @@ class discordClient(discord.Client):
                 player_entry = await self.db_instance.get_player_by_game_and_user(game_id, str(interaction.user.id))
                 is_player = bool(player_entry)
 
+                # Determine time unit and convert to seconds
+                if game_info.get("game_type", "").lower() == "blitz":
+                    # Blitz games: treat input as minutes
+                    added_seconds = int(time_value * 60)
+                    time_unit = "minutes"
+                else:
+                    # Normal games: treat input as hours
+                    added_seconds = int(time_value * 3600)
+                    time_unit = "hours"
+
                 # If the requester is a player (even if they are also an admin or owner), update their extensions
-                if is_player and hours > 0:
+                if is_player and time_value > 0:
+                    # Always store extensions in seconds regardless of game type
                     await self.db_instance.increment_player_extensions(game_id, str(interaction.user.id))
 
                 # Calculate new remaining time
-                added_seconds = hours * 3600
                 new_remaining_time = max(0, timer_info["remaining_time"] + added_seconds)  # Prevent negative time
 
                 # Update the timer
                 await self.db_instance.update_timer(game_id, new_remaining_time, timer_info["timer_running"])
 
-                if hours >= 0:
+                # Format time value nicely (remove .0 for whole numbers)
+                formatted_time = f"{time_value:g}"
+                
+                if time_value >= 0:
                     await interaction.followup.send(
-                        f"Timer for game ID {game_id} has been extended by {hours} hours."
+                        f"Timer for game ID {game_id} has been extended by {formatted_time} {time_unit}."
                     )
                 else:
                     await interaction.followup.send(
-                        f"Timer for game ID {game_id} has been reduced by {abs(hours)} hours."
+                        f"Timer for game ID {game_id} has been reduced by {abs(time_value):g} {time_unit}."
                     )
 
             except Exception as e:
@@ -924,12 +937,12 @@ class discordClient(discord.Client):
 
         @self.tree.command(
             name="extensions-stats",
-            description="Shows all players in the game and their total extension amounts in hours.",
+            description="Shows all players in the game and their total extension amounts.",
             guild=discord.Object(id=self.guild_id)
         )
         @require_bot_channel(self.config)
         async def extensions_stats(interaction: discord.Interaction):
-            """Displays a summary of all players and their total extensions in hours."""
+            """Displays a summary of all players and their total extensions (hours or minutes based on game type)."""
             await interaction.response.defer()
 
             # Get the game ID associated with the channel
@@ -939,6 +952,17 @@ class discordClient(discord.Client):
                 return
 
             try:
+                # Fetch game info to determine game type
+                game_info = await self.db_instance.get_game_info(game_id)
+                if not game_info:
+                    await interaction.followup.send("Game information not found.")
+                    return
+
+                # Determine time unit based on game type
+                is_blitz = game_info.get("game_type", "").lower() == "blitz"
+                time_unit = "minutes" if is_blitz else "hours"
+                time_divisor = 60 if is_blitz else 3600
+
                 # Fetch all players and their extensions for the given game
                 players_in_game = await self.db_instance.get_players_in_game(game_id)
                 
@@ -961,13 +985,13 @@ class discordClient(discord.Client):
                     member = guild.get_member(int(player_id))
                     display_name = member.display_name if member else f"Unknown (ID: {player_id})"
 
-                    # Convert extensions (in seconds) to hours and ensure it's an integer
-                    extensions_in_hours = (extensions or 0) // 3600
+                    # Convert extensions (in seconds) to appropriate time unit
+                    extensions_in_time_unit = (extensions or 0) // time_divisor
 
                     # Add the player and their extensions to the embed
                     embed.add_field(
                         name=display_name,
-                        value=f"Total Extensions: {extensions_in_hours} hours",
+                        value=f"Total Extensions: {extensions_in_time_unit} {time_unit}",
                         inline=False
                     )
 
@@ -982,12 +1006,12 @@ class discordClient(discord.Client):
 
         @self.tree.command(
             name="set-default-timer",
-            description="Changes the default timer for the game.",
+            description="Changes the default timer for the game (hours for normal games, minutes for blitz).",
             guild=discord.Object(id=self.guild_id)
         )
         @require_bot_channel(self.config)
         @require_game_owner_or_admin(self.config)
-        async def set_default_timer(interaction: discord.Interaction, hours: int):
+        async def set_default_timer(interaction: discord.Interaction, time_value: float):
             """Changes the default timer for the current game."""
             await interaction.response.defer()
 
@@ -998,15 +1022,28 @@ class discordClient(discord.Client):
                 return
 
             try:
-                # Convert hours to seconds
-                new_default_timer = hours * 3600
+                # Get game info to check if it's a blitz game
+                game_info = await self.db_instance.get_game_info(game_id)
+                if not game_info:
+                    await interaction.followup.send("Game information not found.")
+                    return
+
+                # Check if game type is blitz - if so, treat input as minutes instead of hours
+                if game_info.get("game_type", "").lower() == "blitz":
+                    # Convert minutes to seconds
+                    new_default_timer = int(time_value * 60)
+                    time_unit = "minutes"
+                else:
+                    # Convert hours to seconds
+                    new_default_timer = int(time_value * 3600)
+                    time_unit = "hours"
 
                 # Update the timer_default in the database
                 # Update the default timer using the database method
-                await self.db_instance.update_game_direct(game_id, {"timer_default": new_default_timer})
+                await self.db_instance.update_timer_default(game_id, new_default_timer)
 
                 await interaction.followup.send(
-                    f"Default timer for game ID {game_id} has been updated to {hours} hours."
+                    f"Default timer for game ID {game_id} has been updated to {time_value:g} {time_unit}."
                 )
             except Exception as e:
                 await interaction.followup.send(f"Failed to update default timer: {e}")
@@ -1105,6 +1142,42 @@ class discordClient(discord.Client):
                     color=discord.Color.green(),
                 )
 
+                # Get timer information if game is started - add as first field
+                if game_info['game_started'] and game_info['game_running']:
+                    try:
+                        timer_data = await self.db_instance.get_game_timer(game_id)
+                        if timer_data:
+                            remaining_time = timer_data["remaining_time"]
+                            timer_default = timer_data["timer_default"]
+                            timer_running = timer_data["timer_running"]
+                            
+                            # Convert seconds to readable format
+                            remaining_readable = self.descriptive_time_breakdown(remaining_time) if remaining_time else "Unknown"
+                            
+                            # Check if it's a blitz game for default timer display
+                            if game_info.get("game_type", "").lower() == "blitz":
+                                default_readable = f"{timer_default // 60} minutes" if timer_default else "Unknown"
+                            else:
+                                default_readable = f"{timer_default // 3600} hours" if timer_default else "Unknown"
+                            
+                            timer_status = "Running" if timer_running else "Paused"
+                            
+                            embed.add_field(
+                                name="⏰ Timer Status",
+                                value=(
+                                    f"**Timer Remaining**: {remaining_readable}\n"
+                                    f"**Timer Status**: {timer_status}\n"
+                                    f"**Default Timer**: {default_readable}"
+                                ),
+                                inline=False,
+                            )
+                    except Exception as e:
+                        embed.add_field(
+                            name="⏰ Timer Status",
+                            value="Error fetching timer data",
+                            inline=False,
+                        )
+
                 story_events_map = {0: "None", 1: "Some", 2: "Full"}
                 
                 # Format and group details for the embed
@@ -1157,12 +1230,41 @@ class discordClient(discord.Client):
                     inline=False,
                 )
 
+                # Get timer information if game is started
+                timer_info_text = ""
+                if game_info['game_started'] and game_info['game_running']:
+                    try:
+                        timer_data = await self.db_instance.get_game_timer(game_id)
+                        if timer_data:
+                            remaining_time = timer_data["remaining_time"]
+                            timer_default = timer_data["timer_default"]
+                            timer_running = timer_data["timer_running"]
+                            
+                            # Convert seconds to readable format
+                            remaining_readable = self.descriptive_time_breakdown(remaining_time) if remaining_time else "Unknown"
+                            
+                            # Check if it's a blitz game for default timer display
+                            if game_info.get("game_type", "").lower() == "blitz":
+                                default_readable = f"{timer_default // 60} minutes" if timer_default else "Unknown"
+                            else:
+                                default_readable = f"{timer_default // 3600} hours" if timer_default else "Unknown"
+                            
+                            timer_status = "Running" if timer_running else "Paused"
+                            timer_info_text = (
+                                f"**Timer Remaining**: {remaining_readable}\n"
+                                f"**Timer Status**: {timer_status}\n"
+                                f"**Default Timer**: {default_readable}\n"
+                            )
+                    except Exception as e:
+                        timer_info_text = f"**Timer Info**: Error fetching timer data\n"
+                
                 embed.add_field(
                     name="Game State",
                     value=(
                         f"**Game Running**: {'True' if game_info['game_running'] else 'False'}\n"
                         f"**Game Started**: {'True' if game_info['game_started'] else 'False'}\n"
                         f"**Game Active**: {'True' if game_info['game_active'] else 'False'}\n"
+                        f"{timer_info_text}"
                     ),
                     inline=False,
                 )
@@ -1234,7 +1336,7 @@ class discordClient(discord.Client):
                 return
             
             await asyncio.sleep(5)
-            success = await self.nidhogg.launch_game_lobby(game_id, self.db_instance)
+            success = await self.nidhogg.launch_game_lobby(game_id, self.db_instance, self.config)
             if success:
                 await interaction.followup.send(f"Game lobby launched for game ID: {game_id}.")
             else:
@@ -1793,6 +1895,147 @@ class discordClient(discord.Client):
             except Exception as e:
                 await interaction.followup.send(f"Failed to delete lobby: {e}")
 
+        @self.tree.command(
+            name="reset-game-started",
+            description="Resets the game_started flag to allow retrying /start-game after failures (ADMIN ONLY).",
+            guild=discord.Object(id=self.guild_id),
+        )
+        @require_bot_channel(self.config)
+        @require_game_admin(self.config)
+        async def reset_game_started(interaction: discord.Interaction, confirm_game_name: str):
+            """Resets the game_started flag to False so /start-game can be retried after failures."""
+            await interaction.response.defer()
+
+            # Get the game ID associated with the channel
+            game_id = await self.db_instance.get_game_id_by_channel(interaction.channel_id)
+            if not game_id:
+                await interaction.followup.send("No game lobby is associated with this channel.")
+                return
+
+            game_info = await self.db_instance.get_game_info(game_id)
+            if not game_info:
+                await interaction.followup.send("Game information not found.")
+                return
+
+            # Validate the confirm_game_name
+            if confirm_game_name != game_info["game_name"]:
+                await interaction.followup.send(
+                    f"The confirmation name '{confirm_game_name}' does not match the actual game name '{game_info['game_name']}'."
+                )
+                return
+
+            # Check if the game is actually marked as started
+            if not game_info["game_started"]:
+                await interaction.followup.send(f"Game '{game_info['game_name']}' is not marked as started - no reset needed.")
+                return
+
+            # Reset the game_started flag
+            try:
+                await self.db_instance.set_game_started_value(game_id, False)
+                await interaction.followup.send(
+                    f"✅ Game '{game_info['game_name']}' has been reset. The game_started flag is now False.\n"
+                    f"You can now retry `/start-game` to attempt starting the game again."
+                )
+                print(f"[ADMIN] Game ID {game_id} ({game_info['game_name']}) game_started flag reset by {interaction.user}")
+            except Exception as e:
+                await interaction.followup.send(f"Failed to reset game_started flag: {e}")
+
+        @self.tree.command(
+            name="timer",
+            description="Shows current timer status and remaining time for the game.",
+            guild=discord.Object(id=self.guild_id),
+        )
+        @require_bot_channel(self.config)
+        async def timer_command(interaction: discord.Interaction):
+            """Shows timer information for the current game."""
+            await interaction.response.defer()
+
+            # Get the game ID associated with the channel
+            game_id = await self.db_instance.get_game_id_by_channel(interaction.channel_id)
+            if not game_id:
+                await interaction.followup.send("No game is associated with this channel.")
+                return
+
+            game_info = await self.db_instance.get_game_info(game_id)
+            if not game_info:
+                await interaction.followup.send("Game information not found.")
+                return
+
+            # Check if game is started
+            if not game_info['game_started'] or not game_info['game_running']:
+                await interaction.followup.send("Game must be started and running to show timer information.")
+                return
+
+            try:
+                # Get timer information
+                timer_data = await self.db_instance.get_game_timer(game_id)
+                if not timer_data:
+                    await interaction.followup.send("Timer data not found for this game.")
+                    return
+
+                remaining_time = timer_data["remaining_time"]
+                timer_default = timer_data["timer_default"]
+                timer_running = timer_data["timer_running"]
+
+                # Convert seconds to readable format
+                remaining_readable = self.descriptive_time_breakdown(remaining_time) if remaining_time else "Unknown"
+                
+                # Check if it's a blitz game for default timer display
+                if game_info.get("game_type", "").lower() == "blitz":
+                    default_readable = f"{timer_default / 60:.1f} minutes" if timer_default else "Unknown"
+                    timer_unit = "minutes"
+                else:
+                    hours = timer_default / 3600 if timer_default else 0
+                    if hours == int(hours):
+                        default_readable = f"{int(hours)} hours" if timer_default else "Unknown"
+                    else:
+                        default_readable = f"{hours:.1f} hours" if timer_default else "Unknown"
+                    timer_unit = "hours"
+
+                timer_status = "🟢 Running" if timer_running else "🔴 Paused"
+
+                # Calculate when timer will end
+                from datetime import datetime, timezone, timedelta
+                if remaining_time and timer_running:
+                    current_time = datetime.now(timezone.utc)
+                    future_time = current_time + timedelta(seconds=remaining_time)
+                    discord_timestamp = f"<t:{int(future_time.timestamp())}:F>"
+                    next_turn_text = f"**Next Turn**: {discord_timestamp}"
+                else:
+                    next_turn_text = "**Next Turn**: Timer is paused"
+
+                # Create embed
+                embed = discord.Embed(
+                    title=f"⏰ Timer Status: {game_info['game_name']}",
+                    color=discord.Color.green() if timer_running else discord.Color.red()
+                )
+
+                embed.add_field(
+                    name="Current Timer",
+                    value=(
+                        f"**Time Remaining**: {remaining_readable}\n"
+                        f"**Status**: {timer_status}\n"
+                        f"{next_turn_text}"
+                    ),
+                    inline=False
+                )
+
+                embed.add_field(
+                    name="Timer Settings",
+                    value=(
+                        f"**Default Timer**: {default_readable}\n"
+                        f"**Timer Type**: {timer_unit.title()} per turn"
+                    ),
+                    inline=False
+                )
+
+                embed.set_footer(text=f"Game ID: {game_id}")
+
+                await interaction.followup.send(embed=embed)
+
+            except Exception as e:
+                await interaction.followup.send(f"Error fetching timer information: {e}")
+
         @end_game.autocomplete("game_winner")
         async def game_winner_autocomplete(interaction: discord.Interaction, current: str):
             """Autocomplete options for game winner."""
@@ -1934,26 +2177,26 @@ class discordClient(discord.Client):
         @require_game_owner_or_admin(self.config)
         async def kill_game_lobby(interaction: discord.Interaction):
             # Acknowledge interaction to prevent timeout
-            await interaction.response.defer(ephemeral=True)
+            await interaction.response.defer()
 
             try:
                 # Get the game ID from the channel ID
                 game_id = await self.db_instance.get_game_id_by_channel(interaction.channel_id)
                 if game_id is None:
-                    await interaction.followup.send("No game lobby is associated with this channel.", ephemeral=True)
+                    await interaction.followup.send("No game lobby is associated with this channel.")
                     return
 
                 # Delegate the killing of the process to nidhogg
                 try:
                     await self.nidhogg.kill_game_lobby(game_id, self.db_instance)
-                    await interaction.followup.send(f"Game lobby process for game ID: {game_id} has been killed.", ephemeral=True)
+                    await interaction.followup.send(f"Game lobby process for game ID: {game_id} has been killed.")
                 except ValueError as ve:
-                    await interaction.followup.send(str(ve), ephemeral=True)
+                    await interaction.followup.send(str(ve))
                 except Exception as e:
-                    await interaction.followup.send(f"An error occurred while attempting to kill the game lobby: {e}", ephemeral=True)
+                    await interaction.followup.send(f"An error occurred while attempting to kill the game lobby: {e}")
 
             except Exception as e:
-                await interaction.followup.send(f"An error occurred: {e}", ephemeral=True)
+                await interaction.followup.send(f"An error occurred: {e}")
 
 
 
@@ -2272,8 +2515,6 @@ class discordClient(discord.Client):
 
     async def on_ready(self):
         print(f'Logged on as {self.user}!')
-        await self.db_instance.setup_db()
-
         print("Trying to sync discord bot commands")
 
         try:
