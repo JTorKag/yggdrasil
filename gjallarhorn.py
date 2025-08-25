@@ -1,4 +1,3 @@
-# api 
 
 from fastapi import FastAPI, Query, HTTPException
 from bifrost import bifrost
@@ -32,7 +31,6 @@ class APIHandler:
                 JSON response confirming the backup operation.
             """
             try:
-                # Call the Bifrost method to perform the backup
                 await bifrost.backup_saved_game_files(
                     game_id=game_id,
                     db_instance=self.discord_bot.db_instance,
@@ -57,41 +55,34 @@ class APIHandler:
             API endpoint to notify Discord when a game advances to the next turn, including an embed.
             """
             try:
-                # Fetch game info
                 game_info = await self.discord_bot.db_instance.get_game_info(game_id)
                 if not game_info:
                     raise HTTPException(status_code=404, detail="Game ID not found.")
 
-                # Extract channel ID
                 channel_id = game_info.get("channel_id")
                 if not channel_id:
                     raise HTTPException(status_code=404, detail="Channel ID not found for this game.")
 
-                # Fetch the Discord channel
                 channel = self.discord_bot.get_channel(int(channel_id))
                 if not channel:
                     channel = await self.discord_bot.fetch_channel(int(channel_id))
                 if not channel:
                     raise HTTPException(status_code=404, detail="Discord channel not found.")
 
-                # Fetch timer info
                 timer_info = await self.discord_bot.db_instance.get_game_timer(game_id)
                 if not timer_info:
                     raise HTTPException(status_code=404, detail="Game timer information not found.")
 
-                # Reset the timer to the default time and add chess clock per-turn bonuses
                 try:
-                    timer_default = timer_info["timer_default"]  # Fetch timer_default before resetting
+                    timer_default = timer_info["timer_default"]
                     await self.discord_bot.db_instance.reset_timer_for_new_turn(game_id, self.config)
                     print(f"[DEBUG] Timer for game ID {game_id} reset for new turn (including chess clock bonuses).")
                 except Exception as e:
                     print(f"[ERROR] Failed to reset timer for game ID {game_id}: {e}")
                     raise HTTPException(status_code=500, detail="Failed to reset the timer.")
 
-                # Use the updated remaining time
-                remaining_time = timer_default  # Since we just reset it, this is the new remaining time
+                remaining_time = timer_default
 
-                # Read stats.txt using bifrost
                 try:
                     turn_stats = await bifrost.read_stats_file(game_id, self.discord_bot.db_instance, self.config)
                 except FileNotFoundError:
@@ -101,25 +92,20 @@ class APIHandler:
                     print(f"Error reading stats.txt for game ID {game_id}: {e}")
                     raise HTTPException(status_code=500, detail=str(e))
 
-                # Extract the turn number and missing players
-                turn = turn_stats.get("turn", 0) + 1  # Add +1 to account for the stats file being one turn behind
+                turn = turn_stats.get("turn", 0) + 1
                 missing_turns = turn_stats.get("missing_turns", [])
 
-                # Calculate Discord timestamp
                 current_time = datetime.now(timezone.utc)
                 future_time = current_time + timedelta(seconds=remaining_time)
                 discord_timestamp = f"<t:{int(future_time.timestamp())}:F>"
 
-                # Use the descriptive_time_breakdown method from discord_bot
                 time_breakdown = self.discord_bot.descriptive_time_breakdown(remaining_time)
 
-                # Get the associated role for pinging
                 associated_role_id = game_info.get("role_id")
                 role_mention = ""
                 if associated_role_id:
                     role_mention = f"<@&{associated_role_id}>"
 
-                # Create the embed
                 embed = discord.Embed(
                     title=f"Start of Turn {turn}",
                     description=(
@@ -129,7 +115,6 @@ class APIHandler:
                     color=discord.Color.blue()
                 )
 
-                # Send the message to the Discord channel with role ping
                 if role_mention:
                     await channel.send(content=role_mention, embed=embed)
                 else:
@@ -138,11 +123,9 @@ class APIHandler:
                 return {"status": "success", "message": f"Notification sent and timer reset for Turn {turn}."}
 
             except HTTPException as http_err:
-                # Log HTTP-specific errors
                 print(f"HTTP Exception: {http_err.detail}")
                 raise http_err
             except Exception as e:
-                # Log generic exceptions
                 print(f"Unexpected error in /postexec_notify: {e}")
                 raise HTTPException(status_code=500, detail="An unexpected error occurred.")
 

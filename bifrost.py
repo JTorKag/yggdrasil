@@ -1,4 +1,3 @@
-# filesystem I/O stuff
 
 import os
 import json
@@ -46,8 +45,6 @@ class bifrost:
             ValueError: If configuration is missing required fields or has invalid values.
             FileNotFoundError: If config file doesn't exist.
         """
-        # Get the directory of the current script        
-        # Combine it with the relative path to 'config.json'
         config_path = os.path.join(os.path.dirname(__file__), "config.json")
         
         try:
@@ -60,7 +57,6 @@ class bifrost:
         except Exception as e:
             raise RuntimeError(f"Error reading config file {config_path}: {e}")
         
-        # Validate required configuration fields
         required_fields = {
             'bot_token': str,
             'guild_id': (int, str),
@@ -75,25 +71,21 @@ class bifrost:
             'dev_eviron': str
         }
         
-        # Optional fields (used but have fallbacks)
         optional_fields = {
             'server_host': str
         }
         
-        # Discord ID fields that should be converted to int if they're strings
         discord_id_fields = {'guild_id', 'category_id', 'game_admin', 'game_host'}
         
         for field, expected_type in required_fields.items():
             if field not in config:
                 raise ValueError(f"Missing required configuration field: {field}")
             
-            # Handle tuple of allowed types (like (int, str))
             if isinstance(expected_type, tuple):
                 if not isinstance(config[field], expected_type):
                     type_names = [t.__name__ for t in expected_type]
                     raise ValueError(f"Configuration field '{field}' must be of type {' or '.join(type_names)}, got {type(config[field]).__name__}")
                 
-                # Convert string Discord IDs to int
                 if field in discord_id_fields and isinstance(config[field], str):
                     try:
                         config[field] = int(config[field])
@@ -103,24 +95,20 @@ class bifrost:
                 if not isinstance(config[field], expected_type):
                     raise ValueError(f"Configuration field '{field}' must be of type {expected_type.__name__}, got {type(config[field]).__name__}")
         
-        # Validate optional fields if present
         for field, expected_type in optional_fields.items():
             if field in config and not isinstance(config[field], expected_type):
                 raise ValueError(f"Configuration field '{field}' must be of type {expected_type.__name__}, got {type(config[field]).__name__}")
         
-        # Validate paths exist
         path_fields = ['dom_data_folder', 'backup_data_folder', 'dominions_folder']
         for field in path_fields:
             path = Path(config[field])
             if not path.exists():
                 print(f"Warning: Path does not exist: {config[field]} (will be created if needed)")
         
-        # Validate dominions binary exists
         dom_binary = Path(config['dominions_folder']) / 'dom6_amd64'
         if not dom_binary.exists():
             raise ValueError(f"Dominions binary not found: {dom_binary}")
         
-        # Validate primary_bot_channel is not empty
         if not config['primary_bot_channel']:
             raise ValueError("primary_bot_channel cannot be empty")
         
@@ -175,7 +163,6 @@ class bifrost:
             List[str]: A list of paths to `.2h` files found for the game.
         """
         try:
-            # Fetch the game details using the game ID
             game_details = await db_instance.get_game_info(game_id)
             if not game_details:
                 print(f"No game found with ID: {game_id}")
@@ -186,19 +173,16 @@ class bifrost:
                 print(f"Game name not found for ID: {game_id}")
                 return []
 
-            # Get the dom_data_folder path from the config
             dom_data_folder = config.get("dom_data_folder", "")
             if not dom_data_folder:
                 print("Error: 'dom_data_folder' not found in the config.")
                 return []
 
-            # Construct the path to the savedgames directory
             savedgames_folder = os.path.join(dom_data_folder, "savedgames", game_name)
             if not os.path.isdir(savedgames_folder):
                 print(f"Savedgames folder for game '{game_name}' does not exist.")
                 return []
 
-            # Find all `.2h` files in the directory
             files = [
                 os.path.join(savedgames_folder, f)
                 for f in os.listdir(savedgames_folder)
@@ -224,23 +208,19 @@ class bifrost:
             List[str]: A list of nation names with .2h files (including any prefixes like 'early_').
         """
         try:
-            # Fetch the dom_data_folder from the config
             dom_data_folder = config.get("dom_data_folder")
             if not dom_data_folder:
                 raise ValueError("dom_data_folder is not defined in the configuration.")
 
-            # Construct the game folder path
             game_folder = Path(dom_data_folder) / "savedgames" / game_name
-            print(f"Looking for .2h files in: {game_folder}")  # Debug output
+            print(f"Looking for .2h files in: {game_folder}")
 
-            # Check if the game folder exists
             if not game_folder.is_dir():
                 print(f"Game folder does not exist: {game_folder}")
                 return []
 
-            # Fetch and return all nation names with .2h files (full filename stem)
             return [
-                file.stem  # Use the full stem, preserving any prefixes like 'early_'
+                file.stem
                 for file in game_folder.glob("*.2h")
             ]
         except Exception as e:
@@ -263,7 +243,6 @@ class bifrost:
             Exception: If there's any issue during the backup process.
         """
         try:
-            # Get paths from the configuration
             dom_data_folder = config.get("dom_data_folder")
             backup_data_folder = config.get("backup_data_folder")
             print(dom_data_folder)
@@ -271,16 +250,13 @@ class bifrost:
             if not dom_data_folder or not backup_data_folder:
                 raise ValueError("Configuration missing 'dom_data_folder' or 'backup_data_folder'.")
 
-            # Path to the game's savedgames directory
             savedgames_path = os.path.join(dom_data_folder, "savedgames", game_name)
             if not os.path.exists(savedgames_path):
                 raise FileNotFoundError(f"Savedgames directory not found for game '{game_name}'.")
 
-            # Path to the backup folder for the game
             backup_folder = os.path.join(backup_data_folder, str(game_id) , "pretenders")
             os.makedirs(backup_folder, exist_ok=True)
 
-            # Backup .2h files
             for file_name in os.listdir(savedgames_path):
                 if file_name.endswith(".2h"):
                     source_file = os.path.join(savedgames_path, file_name)
@@ -327,27 +303,22 @@ class bifrost:
             Exception: If there's any issue during the restore process.
         """
         try:
-            # Get paths from the configuration
             dom_data_folder = config.get("dom_data_folder")
             backup_data_folder = config.get("backup_data_folder")
 
             if not dom_data_folder or not backup_data_folder:
                 raise ValueError("Configuration missing 'dom_data_folder' or 'backup_data_folder'.")
 
-            # Path to the live game's savedgames directory
             live_game_path = os.path.join(dom_data_folder, "savedgames", game_name)
             if not os.path.exists(live_game_path):
                 os.makedirs(live_game_path, exist_ok=True)
 
-            # Path to the backup folder for the game
             backup_folder = os.path.join(backup_data_folder, str(game_id), "pretenders")
             if not os.path.exists(backup_folder):
                 raise FileNotFoundError(f"Backup directory not found for game ID {game_id}.")
 
-            # Clear the live game folder
             await bifrost.clear_folder(live_game_path)
 
-            # Restore .2h files
             for file_name in os.listdir(backup_folder):
                 if file_name.endswith(".2h"):
                     source_file = os.path.join(backup_folder, file_name)
@@ -375,7 +346,6 @@ class bifrost:
             FileNotFoundError: If the stats.txt file does not exist.
             ValueError: If the file format is invalid.
         """
-        # Fetch game details from the database
         game_info = await db_instance.get_game_info(game_id)
         if not game_info:
             raise ValueError(f"Game with ID {game_id} not found.")
@@ -397,7 +367,6 @@ class bifrost:
             with open(stats_file_path, "r") as stats_file:
                 lines = stats_file.readlines()
 
-            # Extract game name and turn from the header
             if lines:
                 header_line = lines[0].strip()
                 if header_line.startswith("Statistics for game"):
@@ -406,7 +375,6 @@ class bifrost:
                 else:
                     raise ValueError("Invalid stats.txt header format.")
 
-            # Extract players who didn't play
             for line in lines[1:]:
                 if line.strip().endswith("didn't play this turn"):
                     player_name = line.strip().replace(" didn't play this turn", "")
@@ -431,7 +399,6 @@ class bifrost:
             dict: A dictionary containing game name and turn number, or None if file doesn't exist.
         """
         try:
-            # Fetch game details from the database
             game_info = await db_instance.get_game_info(game_id)
             if not game_info:
                 return None
@@ -441,23 +408,20 @@ class bifrost:
             statusdump_file_path = os.path.join(savedgames_folder, "statusdump.txt")
 
             if not os.path.exists(statusdump_file_path):
-                return None  # File doesn't exist yet, game might still be in lobby
+                return None
 
             with open(statusdump_file_path, "r") as status_file:
                 content = status_file.read().strip()
                 
-            # Parse the statusdump content
-            # Format: "turn -1, era 1, mods 0, turnlimit 0" (lobby is turn -1, game starts at turn 1)
             lines = content.split('\n')
-            turn_number = -1  # Default to -1 (lobby)
+            turn_number = -1
             
             for line in lines:
                 line = line.strip()
                 if line.startswith("turn "):
-                    # Extract turn number from "turn -1, era 1, ..." format
                     parts = line.split(',')
                     if parts:
-                        turn_part = parts[0].strip()  # "turn -1"
+                        turn_part = parts[0].strip()
                         turn_str = turn_part.replace("turn ", "").strip()
                         turn_number = int(turn_str)
                         break
@@ -487,7 +451,6 @@ class bifrost:
             ValueError: If the turn number cannot be determined.
         """
         try:
-            # Fetch game details from the database
             game_info = await db_instance.get_game_info(game_id)
             if not game_info:
                 raise ValueError(f"Game with ID {game_id} not found.")
@@ -496,17 +459,14 @@ class bifrost:
             savedgames_folder = Path(config.get("dom_data_folder")) / "savedgames" / game_name
             backup_folder = Path(config.get("backup_data_folder")) / str(game_id)
 
-            # Ensure the savedgames folder exists
             if not savedgames_folder.exists():
                 raise FileNotFoundError(f"Saved games folder not found for game ID {game_id} at {savedgames_folder}")
 
-            # Check if stats.txt exists
             stats_file = savedgames_folder / "stats.txt"
             if not stats_file.exists():
                 print(f"stats.txt file not found for game ID {game_id} at {stats_file}. Skipping backup for this turn.")
-                return  # Gracefully skip the backup if stats.txt is not available
+                return
 
-            # Read the stats.txt file to determine the current turn
             turn_number = None
             with stats_file.open("r") as f:
                 for line in f:
@@ -518,11 +478,9 @@ class bifrost:
             if turn_number is None:
                 raise ValueError(f"Turn number could not be determined from stats.txt for game ID {game_id}")
 
-            # Create the turn-specific backup folder
-            turn_backup_folder = backup_folder / f"turn_{int(turn_number) + 1}"  # +1 since stats.txt reflects the last completed turn
+            turn_backup_folder = backup_folder / f"turn_{int(turn_number) + 1}"
             turn_backup_folder.mkdir(parents=True, exist_ok=True, mode=0o755)
 
-            # Copy files excluding .d6m and .map
             for file_path in savedgames_folder.iterdir():
                 if file_path.is_file() and not file_path.suffix in [".d6m", ".map"]:
                     shutil.copy(file_path, turn_backup_folder / file_path.name)
@@ -552,7 +510,6 @@ class bifrost:
             FileNotFoundError: If the backup folder or saved games folder is not found.
             ValueError: If the turn number cannot be determined.
         """
-        # Use read_stats_file to determine the current turn
         stats = await bifrost.read_stats_file(game_id, db_instance, config)
         turn_number = stats.get("turn")
         if turn_number is None:
@@ -562,15 +519,12 @@ class bifrost:
         savedgames_folder = Path(config.get("dom_data_folder")) / "savedgames" / game_name
         backup_folder = Path(config.get("backup_data_folder")) / str(game_id) / f"turn_{turn_number}"
 
-        # Ensure the backup folder exists
         if not backup_folder.exists():
             raise FileNotFoundError(f"Backup folder not found for game ID {game_id} at {backup_folder}.")
 
-        # Ensure the saved games folder exists
         if not savedgames_folder.exists():
             raise FileNotFoundError(f"Saved games folder not found for game ID {game_id} at {savedgames_folder}.")
 
-        # Restore files from the backup
         for file_path in backup_folder.iterdir():
             if file_path.is_file() and not file_path.suffix in [".d6m", ".map"]:
                 destination_path = savedgames_folder / file_path.name
@@ -578,9 +532,7 @@ class bifrost:
 
         print(f"Restoration for game ID {game_id} (turn {turn_number}) completed. Deleting backup folder...")
 
-        # Remove the backup folder using shutil (safer than subprocess)
         try:
-            # Validate that backup_folder is within expected directory structure
             backup_data_folder = Path(config.get("backup_data_folder"))
             if not backup_folder.is_relative_to(backup_data_folder):
                 raise ValueError(f"Backup folder path is outside expected directory: {backup_folder}")
@@ -606,35 +558,28 @@ class bifrost:
         """
         mods = []
 
-        # Get the dom_data_folder path from the config
         dom_data_folder = config.get("dom_data_folder", "")
         if not dom_data_folder:
             print("Error: 'dom_data_folder' not found in the config.")
             return mods
 
-        # Path to the mods folder
         mods_folder = os.path.join(dom_data_folder, "mods")
 
-        # Create mods folder if it doesn't exist
         if not os.path.exists(mods_folder):
             os.makedirs(mods_folder, mode=0o755, exist_ok=True)
             print(f"[bifrost] Created missing mods folder: {mods_folder}")
 
         try:
-            # Use scandir for efficient directory listing
             with os.scandir(mods_folder) as entries:
                 for entry in entries:
                     if entry.is_dir():
-                        # Location of the .dm file
                         dm_file_path = os.path.join(entry.path, f"{entry.name}.dm")
 
-                        # Check if the file exists before parsing
                         if os.path.isfile(dm_file_path):
                             metadata = bifrost.parse_ygg_metadata(dm_file_path)
                         else:
                             metadata = {"yggemoji": "::", "yggdescr": ""}
 
-                        # Create the JSON object for the mod
                         mod_json = {
                             "name": entry.name,
                             "location": f"{entry.name}/{entry.name}.dm",
@@ -661,35 +606,28 @@ class bifrost:
         """
         maps = []
 
-        # Get the dom_data_folder path from the config
         dom_data_folder = config.get("dom_data_folder", "")
         if not dom_data_folder:
             print("Error: 'dom_data_folder' not found in the config.")
             return maps
 
-        # Path to the maps folder
         maps_folder = os.path.join(dom_data_folder, "maps")
 
-        # Create maps folder if it doesn't exist
         if not os.path.exists(maps_folder):
             os.makedirs(maps_folder, mode=0o755, exist_ok=True)
             print(f"[bifrost] Created missing maps folder: {maps_folder}")
 
         try:
-            # Use scandir for efficient directory listing
             with os.scandir(maps_folder) as entries:
                 for entry in entries:
                     if entry.is_dir():
-                        # Location of the .map file
                         map_file_path = os.path.join(entry.path, f"{entry.name}.map")
 
-                        # Check if the file exists before parsing
                         if os.path.isfile(map_file_path):
                             metadata = bifrost.parse_ygg_metadata(map_file_path)
                         else:
                             metadata = {"yggemoji": "::", "yggdescr": ""}
 
-                        # Create the JSON object for the map
                         map_json = {
                             "name": entry.name,
                             "location": f"{entry.name}/{entry.name}.map",
@@ -713,13 +651,13 @@ class bifrost:
         try:
             st = os.stat(path, follow_symlinks=False)
         except FileNotFoundError:
-            return  # vanished between event and chmod
+            return
 
         if stat.S_ISDIR(st.st_mode):
-            return  # skip directories
+            return
 
         new_mode = st.st_mode & ~(stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-        if new_mode != st.st_mode:           # only call chmod when needed
+        if new_mode != st.st_mode:
             try:
                 os.chmod(path, new_mode, follow_symlinks=False)
             except PermissionError as exc:
@@ -737,7 +675,6 @@ class bifrost:
 
         try:
             for root, dirs, files in os.walk(folder_path, topdown=False):
-                # files
                 for file_name in files:
                     fp = os.path.join(root, file_name)
                     try:
@@ -752,7 +689,6 @@ class bifrost:
                             {"type": "file", "path": fp, "error": str(exc)}
                         )
 
-                # keep directory perms sensible
                 for dir_name in dirs:
                     dp = os.path.join(root, dir_name)
                     try:
@@ -767,7 +703,6 @@ class bifrost:
                             {"type": "directory", "path": dp, "error": str(exc)}
                         )
 
-            # root folder itself
             try:
                 st = os.stat(folder_path)
                 os.chmod(folder_path, st.st_mode | stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
@@ -800,18 +735,13 @@ class bifrost:
             folder_path (str): The path to the folder.
         """
         try:
-            # Remove executable permissions for the folder itself
             bifrost.remove_execution_permission(folder_path)
 
-            # Set umask to prevent new files and directories from being created with executable permissions
             os.umask(0o111)
             print(f"Execution permissions restricted for: {folder_path}")
         except Exception as e:
             print(f"Error setting folder permissions for {folder_path}: {e}")
 
-    # ------------------------------------------------------------------
-    # Efficient watchdog  –  debounce + thread-offload
-    # ------------------------------------------------------------------
     class _PermissionHandler(FileSystemEventHandler):
         """
         Debounces *.2h* file events and runs remove_execution_permission()
@@ -825,7 +755,6 @@ class bifrost:
             self._pending: set[str] = set()
             self._flush_handle: asyncio.TimerHandle | None = None
 
-        # watchdog callbacks -------------------------------------------
         def on_created(self, event):
             if not event.is_directory and event.src_path.endswith(".2h"):
                 self._queue(event.src_path)
@@ -834,10 +763,9 @@ class bifrost:
             if not event.is_directory and event.src_path.endswith(".2h"):
                 self._queue(event.src_path)
 
-        # debounce machinery ------------------------------------------
         def _queue(self, path: str):
             self._pending.add(path)
-            if self._flush_handle is None:        # first event in the burst
+            if self._flush_handle is None:
                 self._flush_handle = self._loop.call_later(
                     self._DEBOUNCE_SEC, self._flush
                 )
@@ -849,15 +777,6 @@ class bifrost:
             asyncio.ensure_future(self._chmod_paths(paths), loop=self._loop)
 
         async def _chmod_paths(self, paths: list[str]):
-            # DISABLED: File watching chmod operations (was sudo workaround)
-            # loop = self._loop
-            # ex = _get_executor()
-            # await asyncio.gather(
-            #     *(loop.run_in_executor(ex,
-            #                            bifrost.remove_execution_permission,
-            #                            p)
-            #       for p in paths)
-            # )
             print(f"[bifrost] Skipped chmod for {len(paths)} watched files")
 
     @staticmethod
@@ -893,14 +812,9 @@ class bifrost:
             print("Error: 'dom_data_folder' not found in the config.")
             return
 
-        # DISABLED: Remove execution permissions recursively (was sudo workaround)
-        # bifrost.remove_execution_permission_recursive(dom_data_folder)
 
-        # DISABLED: Set the folder to restrict executable permissions for new files (was sudo workaround)  
-        # bifrost.set_folder_no_exec(dom_data_folder)
         print("[bifrost] Disabled recursive chmod operations for non-sudo operation")
 
-        # Watch the folder for new files
         observer = bifrost.watch_folder(dom_data_folder)
 
         return observer
@@ -919,32 +833,27 @@ class bifrost:
             dict: A dictionary containing success status, extracted path, and error (if any).
         """
         try:
-            # Derive the maps folder path from config
             dom_data_folder = config.get("dom_data_folder")
             if not dom_data_folder:
                 return {"success": False, "error": "Configuration error: dom_data_folder is not set."}
 
             maps_folder = Path(dom_data_folder) / "maps"
-            maps_folder.mkdir(parents=True, exist_ok=True, mode=0o755)  # Ensure the maps folder exists
+            maps_folder.mkdir(parents=True, exist_ok=True, mode=0o755)
 
-            # Save the binary data as a zip file
             zip_file_path = maps_folder / filename
             if zip_file_path.exists():
                 return {"success": False, "error": f"A file with the name '{filename}' already exists in the maps folder."}
 
             with open(zip_file_path, "wb") as f:
-                f.write(file_data)  # Write the raw binary data to the zip file
+                f.write(file_data)
             print(f"Saved zip file to {zip_file_path}")
 
-            # Determine the extraction folder (same name as the zip file, without the extension)
             extract_folder = maps_folder / zip_file_path.stem
             if extract_folder.exists():
                 return {"success": False, "error": f"A folder named '{zip_file_path.stem}' already exists in the maps folder."}
 
-            # Extract the zip file into the extraction folder
             await bifrost.safe_extract_zip(str(zip_file_path), str(extract_folder))
 
-            # Return success with extracted path
             return {"success": True, "extracted_path": str(extract_folder)}
 
         except zipfile.BadZipFile:
@@ -967,32 +876,27 @@ class bifrost:
             dict: A dictionary containing success status, extracted path, and error (if any).
         """
         try:
-            # Derive the mods folder path from config
             dom_data_folder = config.get("dom_data_folder")
             if not dom_data_folder:
                 return {"success": False, "error": "Configuration error: dom_data_folder is not set."}
 
             mods_folder = Path(dom_data_folder) / "mods"
-            mods_folder.mkdir(parents=True, exist_ok=True, mode=0o755)  # Ensure the mods folder exists
+            mods_folder.mkdir(parents=True, exist_ok=True, mode=0o755)
 
-            # Save the binary data as a zip file
             zip_file_path = mods_folder / filename
             if zip_file_path.exists():
                 return {"success": False, "error": f"A file with the name '{filename}' already exists in the mods folder."}
 
             with open(zip_file_path, "wb") as f:
-                f.write(file_data)  # Write the raw binary data to the zip file
+                f.write(file_data)
             print(f"Saved zip file to {zip_file_path}")
 
-            # Determine the extraction folder (same name as the zip file, without the extension)
             extract_folder = mods_folder / zip_file_path.stem
             if extract_folder.exists():
                 return {"success": False, "error": f"A folder named '{zip_file_path.stem}' already exists in the mods folder."}
 
-            # Extract the zip file into the extraction folder
             await bifrost.safe_extract_zip(str(zip_file_path), str(extract_folder))
 
-            # Return success with extracted path
             return {"success": True, "extracted_path": str(extract_folder)}
 
         except zipfile.BadZipFile:
@@ -1008,50 +912,27 @@ class bifrost:
         Extract a zip file and ensure directories and files have proper permissions.
         """
         try:
-            # Ensure the extraction directory exists and is writable
             os.makedirs(extract_to, exist_ok=True)
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(_get_executor(), os.chmod, extract_to, 0o755)
 
-            # Extract the zip file with path traversal protection
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                # Validate all paths before extraction
                 extract_to_resolved = Path(extract_to).resolve()
                 for member in zip_ref.namelist():
-                    # Resolve the full extraction path
                     member_path = (extract_to_resolved / member).resolve()
                     
-                    # Check if the resolved path is within the extraction directory
                     if not member_path.is_relative_to(extract_to_resolved):
                         raise ValueError(f"Unsafe path in ZIP file: {member} (resolves to {member_path})")
                     
-                    # Check for dangerous path components
                     if ".." in member or member.startswith("/") or ":" in member:
                         raise ValueError(f"Dangerous path in ZIP file: {member}")
                 
-                # Safe to extract now
                 zip_ref.extractall(extract_to)
             print(f"Extracted {zip_path} to {extract_to}")
 
-            # DISABLED: Mass chmod operations (was sudo workaround)
-            # chmod_tasks = []
-            # for root, dirs, files in os.walk(extract_to):
-            #     for dir_name in dirs:
-            #         dir_path = os.path.join(root, dir_name)
-            #         chmod_tasks.append(loop.run_in_executor(_get_executor(), os.chmod, dir_path, 0o755))
-            #     for file_name in files:
-            #         file_path = os.path.join(root, file_name)
-            #         chmod_tasks.append(loop.run_in_executor(_get_executor(), os.chmod, file_path, 0o644))
-            # 
-            # # Execute all chmod operations in parallel
-            # if chmod_tasks:
-            #     await asyncio.gather(*chmod_tasks)
 
-            # DISABLED: Remove execute permissions from files (was sudo workaround)
-            # bifrost.remove_execution_permission_recursive(extract_to)
             print(f"[bifrost] Extracted {zip_path} without chmod operations")
 
-            # Delete the zip file after extraction
             os.remove(zip_path)
             print(f"Deleted zip file: {zip_path}")
 
@@ -1064,33 +945,12 @@ class bifrost:
 
 
 
-    # @staticmethod
-    # def ensure_screen_permissions():
     #     """
     #     Ensure the '/run/screen' directory exists and has correct permissions
     #     for 'screen' to operate without requiring sudo.
     #     """
-    #     try:
-    #         screen_dir = Path("/run/screen")
-    #         # Check if the directory exists
-    #         if not screen_dir.exists():
-    #             os.makedirs(screen_dir, mode=0o755)
-    #             print(f"Created '/run/screen' directory with correct permissions.")
 
-    #         # Ensure the permissions are correct
-    #         os.chmod(screen_dir, 0o775)
-    #         print("'/run/screen' permissions set to 775.")
 
-    #         # Change the ownership to the current user and group
-    #         import pwd, grp
-    #         current_user = pwd.getpwuid(os.getuid()).pw_name
-    #         current_group = grp.getgrgid(os.getgid()).gr_name
-    #         os.chown(screen_dir, os.getuid(), os.getgid())
-    #         print(f"'/run/screen' ownership set to {current_user}:{current_group}.")
-    #     except PermissionError:
-    #         print("Insufficient permissions to modify '/run/screen'. Consider running as root.")
-    #     except Exception as e:
-    #         print(f"Error ensuring screen permissions: {e}")
 
     @staticmethod
     async def set_executable_permission(file_path: str):
@@ -1101,10 +961,8 @@ class bifrost:
             file_path (str): The path to the file.
         """
         try:
-            # Get the current file permissions
             st = os.stat(file_path)
             
-            # Set the executable bit for the owner, group, and others
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(
                 _get_executor(), 
@@ -1121,7 +979,6 @@ class bifrost:
     async def get_valid_nations_from_files(game_id: int, config: dict, db_instance):
         """Get valid nations from .2h files for a specific game."""
         try:
-            # Get the game info to find the game name
             game_info = await db_instance.get_game_info(game_id)
             if not game_info:
                 return []
@@ -1131,7 +988,6 @@ class bifrost:
             if not dom_data_folder:
                 return []
             
-            # Get .2h files for this game
             nation_files = await bifrost.get_2h_files_by_game_id(game_id, db_instance, config)
             valid_nations = [os.path.splitext(os.path.basename(nation_file))[0] for nation_file in nation_files]
             return valid_nations
@@ -1178,7 +1034,6 @@ class bifrost:
         """
         try:
             loop = asyncio.get_event_loop()
-            # Use thread executor for file I/O to avoid blocking
             def _read_file():
                 with open(filepath, 'r', encoding='utf-8') as file:
                     return file.read()
@@ -1201,7 +1056,6 @@ class bifrost:
         """
         try:
             loop = asyncio.get_event_loop()
-            # Use thread executor for file I/O to avoid blocking
             def _write_file():
                 with open(filepath, 'w', encoding='utf-8') as file:
                     file.write(content)

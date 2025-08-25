@@ -78,7 +78,6 @@ async def shutdown(discordBot, db_instance, observer, shutdown_signal, timer_man
     """Handles final cleanup after services have been shut down."""
     print("[INFO] Performing final cleanup...")
     
-    # Kill all running game screen sessions before closing database
     try:
         print("[INFO] Cleaning up running game screen sessions...")
         from nidhogg import nidhogg
@@ -92,7 +91,6 @@ async def shutdown(discordBot, db_instance, observer, shutdown_signal, timer_man
                 game_name = game.get("game_name", f"game_{game_id}")
                 
                 try:
-                    # Use nidhogg to properly kill the game
                     await nidhogg_instance.kill_game_lobby(game_id, db_instance)
                     print(f"[INFO] Killed game {game_name} (ID: {game_id})")
                 except Exception as e:
@@ -102,11 +100,9 @@ async def shutdown(discordBot, db_instance, observer, shutdown_signal, timer_man
     except Exception as e:
         print(f"[ERROR] Error during game cleanup: {e}")
     
-    # Close the database connection
     await db_instance.close()
     print("DB connection closed.")
     
-    # Stop the observer if it exists
     if observer:
         observer.stop()
         print("Stopped monitoring dom_data_folder.")
@@ -118,13 +114,11 @@ async def shutdown(discordBot, db_instance, observer, shutdown_signal, timer_man
 
 def is_wsl():
     try:
-        # Check if /proc/version contains "microsoft" or "WSL"
         with open("/proc/version", "r") as f:
             version_info = f.read().lower()
             if "microsoft" in version_info or "wsl" in version_info:
                 return True
     except FileNotFoundError:
-        # If /proc/version doesn't exist, it's not a Linux system
         return False
     return False
 
@@ -136,7 +130,6 @@ async def main():
     if config and config.get("debug", False):
         print("[MAIN] Configuration loaded")
 
-    # If you need WSL specific configs setup here. 
     if is_wsl():
         if config and config.get("debug", False):
             print("[MAIN] WSL detected, using dev environment")
@@ -149,7 +142,6 @@ async def main():
         print("[MAIN] Environment variables set")
     
 
-    # Set up necessary permissions and configurations
     if config and config.get("debug", False):
         print("[MAIN] Setting up file permissions...")
     await bifrost.set_executable_permission(Path(config.get("dominions_folder")) / "dom6_amd64")
@@ -159,7 +151,6 @@ async def main():
     if config and config.get("debug", False):
         print("[MAIN] File system monitoring configured")
 
-    # Initialize signals, bot, database, and TimerManager
     if config and config.get("debug", False):
         print("[MAIN] Creating event signals...")
     shutdown_signal = asyncio.Event()
@@ -171,7 +162,6 @@ async def main():
         print("[MAIN] Connecting to database...")
     await db_instance.connect()
     
-    # Set up database tables immediately after connection
     if config and config.get("debug", False):
         print("[MAIN] Setting up database tables...")
     await db_instance.setup_db()
@@ -183,14 +173,13 @@ async def main():
     if config and config.get("debug", False):
         print("[MAIN] Discord bot initialized")
 
-    # Pass the shared db_instance to TimerManager
     if config and config.get("debug", False):
         print("[MAIN] Creating TimerManager...")
     timer_manager = TimerManager(
         db_instance=db_instance,
         config=config,
         nidhogg=nidhogg,
-        discord_bot=discordBot  # Pass discord_bot instance
+        discord_bot=discordBot
     )
     if config and config.get("debug", False):
         print("[MAIN] TimerManager created")
@@ -199,20 +188,18 @@ async def main():
     @discordBot.event
     async def on_disconnect():
         print("[INFO] Discord bot disconnected")
-        # Note: Database connection will auto-recover due to retry mechanisms
 
     @discordBot.event
     async def on_ready():
         print(f"[INFO] Discord bot connected as {discordBot.user}")
         print(f"[INFO] Connected to guild: {discordBot.get_guild(config.get('guild_id'))}")
         
-        # Sync Discord commands with timeout (set SKIP_SYNC=1 to skip)
         if not os.getenv('SKIP_SYNC'):
             print("Trying to sync discord bot commands")
             try:
                 await asyncio.wait_for(
                     discordBot.tree.sync(guild=discord.Object(id=config.get('guild_id'))),
-                    timeout=30.0  # 30 second timeout
+                    timeout=30.0
                 )
                 print("Discord commands synced!")
             except asyncio.TimeoutError:
@@ -222,7 +209,6 @@ async def main():
         else:
             print("Skipping command sync (SKIP_SYNC=1)")
         
-        # Signal that bot is ready
         if bot_ready_signal:
             bot_ready_signal.set()
             print("[DEBUG] Bot ready signal set!")
@@ -231,14 +217,12 @@ async def main():
     async def on_resumed():
         print("[INFO] Discord bot session resumed")
 
-    # Define API handler and start it concurrently
     if config and config.get("debug", False):
         print("[MAIN] Creating API handler...")
     api_handler = APIHandler(discord_bot=discordBot, config=config)
     if config and config.get("debug", False):
         print("[MAIN] API handler created")
 
-    # Create uvicorn server instance that we can shutdown gracefully
     if config and config.get("debug", False):
         print("[MAIN] Setting up uvicorn server...")
     import uvicorn
@@ -253,7 +237,6 @@ async def main():
         """
         await uvicorn_server.serve()
 
-    # Set up graceful shutdown on signals
     if config and config.get("debug", False):
         print("[MAIN] Setting up signal handlers...")
     def handle_signal():
@@ -266,7 +249,6 @@ async def main():
     if config and config.get("debug", False):
         print("[MAIN] Signal handlers configured")
 
-    # Run all components concurrently, including TimerManager
     if config and config.get("debug", False):
         print("[MAIN] Creating tasks for all services...")
     tasks = [
@@ -278,18 +260,15 @@ async def main():
     if config and config.get("debug", False):
         print("[MAIN] All tasks created, starting services...")
     
-    # Wait for shutdown signal
     await shutdown_signal.wait()
     print("\nShutdown signal received, stopping all services...")
     
-    # Gracefully shutdown each service instead of cancelling tasks
     print("[INFO] Shutting down API server...")
     uvicorn_server.should_exit = True
     await uvicorn_server.shutdown()
     
     print("[INFO] Sending shutdown notifications to active games...")
     try:
-        # Get all active games and send shutdown notifications
         active_games = await db_instance.get_active_games_with_channels()
         for game_info in active_games:
             try:
@@ -306,10 +285,8 @@ async def main():
                         message = f"🛑 **Service Maintenance** 🛑\n\nThe game service is being shut down for maintenance. "
                         message += f"**{game_name}** will be temporarily unavailable until the service is restarted."
                         
-                        # Add game owner ping if available
                         if game_owner:
                             try:
-                                # Find the game owner by username in the guild
                                 guild = channel.guild
                                 owner_member = None
                                 for member in guild.members:
@@ -337,13 +314,10 @@ async def main():
     print("[INFO] Shutting down TimerManager...")
     await timer_manager.stop_timers()
     
-    # Now wait for tasks to complete naturally
     await asyncio.gather(*tasks, return_exceptions=True)
     
-    # Perform final cleanup
     await shutdown(discordBot, db_instance, observer, shutdown_signal, timer_manager)
 
-    # Return instances for graceful shutdown in KeyboardInterrupt
     return discordBot, db_instance, observer, shutdown_signal, timer_manager
 
 
@@ -352,8 +326,8 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         print("\nKeyboardInterrupt. Exiting.")
-        loop = asyncio.new_event_loop()  # Create a new event loop
-        asyncio.set_event_loop(loop)  # Set it as the current loop
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
         discordBot, db_instance, observer, shutdown_signal, timer_manager = loop.run_until_complete(main())
         loop.run_until_complete(shutdown(discordBot, db_instance, observer, shutdown_signal, timer_manager))
         sys.exit(0)

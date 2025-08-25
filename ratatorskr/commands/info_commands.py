@@ -22,39 +22,32 @@ def register_info_commands(bot):
         Fetch and display details about the game in the current channel in a single embed.
         """
         try:
-            # Defer interaction to prevent timeout
             await interaction.response.defer()
 
-            # Get the game ID from the channel ID
             game_id = await bot.db_instance.get_game_id_by_channel(interaction.channel_id)
             if not game_id:
                 await interaction.followup.send("This channel is not associated with an active game.")
                 return
 
-            # Fetch game details
             game_info = await bot.db_instance.get_game_info(game_id)
             if not game_info:
                 await interaction.followup.send(f"No game found with ID {game_id}.")
                 return
 
-            # Get the host address from the config file
             server_host = bot.config.get("server_host", "Unknown")
 
-            # Map story events and game era to human-readable values
             story_events_map = {0: "None", 1: "Some", 2: "Full"}
             story_events_value = story_events_map.get(game_info["story_events"], "Unknown")
 
             era_map = {1: "Early", 2: "Middle", 3: "Late"}
             game_era_value = era_map.get(game_info["game_era"], "Unknown")
 
-            # Create an embed to display the game details
             embed = discord.Embed(
                 title=f"Game Info: {game_info['game_name']}",
                 description=f"Details for game ID **{game_id}**",
                 color=discord.Color.green(),
             )
 
-            # Get current turn from statusdump
             current_turn = "Unknown"
             try:
                 from bifrost import bifrost
@@ -68,14 +61,12 @@ def register_info_commands(bot):
             except Exception:
                 current_turn = "Unknown"
 
-            # Add current turn info
             embed.add_field(
                 name="🎯 Current Turn",
                 value=current_turn,
                 inline=False,
             )
 
-            # Get timer information - show for all games
             try:
                 timer_data = await bot.db_instance.get_game_timer(game_id)
                 player_control_timers = game_info.get('player_control_timers', True)
@@ -86,10 +77,8 @@ def register_info_commands(bot):
                     timer_default = timer_data["timer_default"]
                     timer_running = timer_data["timer_running"]
                     
-                    # Convert seconds to readable format
                     remaining_readable = descriptive_time_breakdown(remaining_time) if remaining_time else "Unknown"
                     
-                    # Check if it's a blitz game for default timer display
                     if game_info.get("game_type", "").lower() == "blitz":
                         default_readable = f"{timer_default / 60:.1f} minutes" if timer_default else "Unknown"
                     else:
@@ -109,12 +98,10 @@ def register_info_commands(bot):
                         f"**Extension Rules**: {extension_rule}"
                     )
                     
-                    # Add chess clock information if enabled
                     if chess_clock_active:
                         starting_time = game_info.get('chess_clock_starting_time', 0)
                         per_turn_time = game_info.get('chess_clock_per_turn_time', 0)
                         
-                        # Determine time units based on game type
                         game_type = game_info.get('game_type', '').lower()
                         if game_type == 'blitz':
                             starting_display = f"{starting_time / 60:.1f} minutes"
@@ -138,12 +125,10 @@ def register_info_commands(bot):
                     extension_rule = "✅ Players can extend timers" if player_control_timers else "❌ Only owner/admin can extend timers"
                     timer_value = f"No timer configured\n**Extension Rules**: {extension_rule}"
                     
-                    # Add chess clock information if enabled
                     if chess_clock_active:
                         starting_time = game_info.get('chess_clock_starting_time', 0)
                         per_turn_time = game_info.get('chess_clock_per_turn_time', 0)
                         
-                        # Determine time units based on game type
                         game_type = game_info.get('game_type', '').lower()
                         if game_type == 'blitz':
                             starting_display = f"{starting_time / 60:.1f} minutes"
@@ -171,7 +156,6 @@ def register_info_commands(bot):
                     inline=False,
                 )
 
-            # Format and group details for the embed
             embed.add_field(
                 name="Basic Information",
                 value=(
@@ -231,7 +215,6 @@ def register_info_commands(bot):
                 inline=False,
             )
 
-            # Send the embed
             await interaction.followup.send(embed=embed)
 
         except Exception as e:
@@ -260,7 +243,6 @@ def register_info_commands(bot):
                 await interaction.followup.send("There are currently no active games.", ephemeral=True)
                 return
 
-            # Create an embed for better formatting
             embed = discord.Embed(
                 title="Active Games on Server",
                 color=discord.Color.blue(),
@@ -271,7 +253,6 @@ def register_info_commands(bot):
                 game_id = game['game_id']
                 game_name = game['game_name']
                 
-                # Get timer information
                 timer_info = await bot.db_instance.get_game_timer(game_id)
                 timer_text = "No timer info"
                 
@@ -280,28 +261,22 @@ def register_info_commands(bot):
                     default_timer = timer_info.get('timer_default', 0) 
                     timer_running = timer_info.get('timer_running', False)
                     
-                    # Format remaining time
                     remaining_text = descriptive_time_breakdown(remaining_time) if remaining_time > 0 else "Timer expired"
                     
-                    # Format default timer
                     default_text = descriptive_time_breakdown(default_timer) if default_timer > 0 else "Not set"
                     
-                    # Status
                     status = "Running" if timer_running else "⏸️ Paused"
                     
                     timer_text = f"**Current:** {remaining_text}\n**Default:** {default_text}\n**Status:** {status}"
                 
-                # Game info
                 game_info_text = f"**Owner:** {game.get('game_owner', 'Unknown')}\n**Era:** {game.get('game_era', 'Unknown')}\n**Type:** {game.get('game_type', 'Unknown')}"
                 
-                # Add field for each game
                 embed.add_field(
                     name=f"🎮 {game_name} (ID: {game_id})",
                     value=f"{game_info_text}\n\n**Timer Info:**\n{timer_text}",
                     inline=True
                 )
 
-            # Add footer with total count
             embed.set_footer(text=f"Total: {len(active_games)} active game(s)")
 
             await interaction.followup.send(embed=embed, ephemeral=True)

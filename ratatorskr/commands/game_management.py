@@ -821,25 +821,36 @@ def register_game_management_commands(bot):
     @require_game_channel(bot.config)
     @require_game_owner_or_admin(bot.config)
     async def chess_clock_setup_command(interaction: discord.Interaction, starting_time: float, per_turn_bonus: float):
-        """Set up chess clock mode for the current game."""
+        """Set up or disable chess clock mode for the current game.
+        
+        Enables chess clock mode with specified starting time and per-turn bonus.
+        To disable chess clock mode, set both starting_time and per_turn_bonus to 0.
+        
+        Requirements for enabling:
+        - Game must not have started yet
+        - Player control timers must be enabled
+        - Starting time must be positive, per-turn bonus cannot be negative
+        
+        Time units are based on game type:
+        - Blitz games: values are in minutes, converted to seconds internally
+        - Normal games: values are in hours, converted to seconds internally
+        
+        When enabled, players receive their starting time allocation when they claim nations.
+        """
         await interaction.response.defer()
         
-        # Get the game ID associated with the channel
         game_id = await bot.db_instance.get_game_id_by_channel(interaction.channel_id)
         if not game_id:
             await interaction.followup.send("No game is associated with this channel.")
             return
         
-        # Get current game info
         game_info = await bot.db_instance.get_game_info(game_id)
         if not game_info:
             await interaction.followup.send("Game information not found.")
             return
         
-        # Check if this is a disable request (both values are 0)
         if starting_time == 0 and per_turn_bonus == 0:
             try:
-                # Disable chess clock mode
                 await bot.db_instance.update_game_property(game_id, "chess_clock_active", False)
                 await bot.db_instance.update_game_property(game_id, "chess_clock_starting_time", 0)
                 await bot.db_instance.update_game_property(game_id, "chess_clock_per_turn_time", 0)
@@ -854,7 +865,6 @@ def register_game_management_commands(bot):
                 await interaction.followup.send(f"Failed to disable chess clock: {e}")
                 return
         
-        # Check if player_control_timers is enabled (only for enabling chess clock)
         player_control_timers = game_info.get("player_control_timers", True)
         if not player_control_timers:
             await interaction.followup.send(
@@ -863,29 +873,25 @@ def register_game_management_commands(bot):
             )
             return
         
-        # Check if game has already started
         if game_info.get("game_started", False):
             await interaction.followup.send("❌ Cannot enable chess clock mode after the game has started.")
             return
         
-        # Validate values for enabling chess clock
         if starting_time <= 0 or per_turn_bonus < 0:
             await interaction.followup.send("❌ Starting time must be positive and per-turn bonus cannot be negative.")
             return
         
         try:
-            # Convert time values based on game type (round to nearest second)
             game_type = game_info.get("game_type", "").lower()
             if game_type == "blitz":
-                starting_seconds = round(starting_time * 60)  # Minutes to seconds
-                per_turn_seconds = round(per_turn_bonus * 60)  # Minutes to seconds
+                starting_seconds = round(starting_time * 60)
+                per_turn_seconds = round(per_turn_bonus * 60)
                 time_unit = "minutes"
             else:
-                starting_seconds = round(starting_time * 3600)  # Hours to seconds
-                per_turn_seconds = round(per_turn_bonus * 3600)  # Hours to seconds
+                starting_seconds = round(starting_time * 3600)
+                per_turn_seconds = round(per_turn_bonus * 3600)
                 time_unit = "hours"
             
-            # Update chess clock settings
             await bot.db_instance.update_game_property(game_id, "chess_clock_active", True)
             await bot.db_instance.update_game_property(game_id, "chess_clock_starting_time", starting_seconds)
             await bot.db_instance.update_game_property(game_id, "chess_clock_per_turn_time", per_turn_seconds)

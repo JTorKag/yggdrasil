@@ -1,4 +1,3 @@
-# db class
 
 import aiosqlite
 import asyncio
@@ -26,7 +25,6 @@ class dbClient:
             if self.connection is None:
                 await self._connect()
             else:
-                # Test connection health
                 try:
                     await self.connection.execute("SELECT 1")
                 except (aiosqlite.OperationalError, sqlite3.OperationalError):
@@ -35,7 +33,7 @@ class dbClient:
                     try:
                         await self.connection.close()
                     except (aiosqlite.OperationalError, sqlite3.OperationalError):
-                        pass  # Expected when connection is already broken
+                        pass
                     self.connection = None
                     await self._connect()
 
@@ -48,7 +46,6 @@ class dbClient:
             try:
                 self.connection = await aiosqlite.connect(self.db_path, timeout=30)
                 self.connection.row_factory = sqlite3.Row
-                # Test the connection
                 await self.connection.execute("SELECT 1")
                 if self.config and self.config.get("debug", False):
                     print(f"[DB] Connected successfully (attempt {attempt + 1})")
@@ -58,7 +55,7 @@ class dbClient:
                     print(f"[DB] Connection attempt {attempt + 1} failed: {e}")
                 if attempt < max_retries - 1:
                     await asyncio.sleep(retry_delay)
-                    retry_delay *= 2  # Exponential backoff
+                    retry_delay *= 2
                 else:
                     raise Exception(f"Failed to connect to database after {max_retries} attempts")
 
@@ -74,7 +71,7 @@ class dbClient:
                 try:
                     await self.connection.close()
                 except (aiosqlite.OperationalError, sqlite3.OperationalError):
-                    pass  # Connection may already be closed
+                    pass
                 self.connection = None
 
     async def _execute_with_retry(self, operation):
@@ -88,11 +85,10 @@ class dbClient:
                 if self.config and self.config.get("debug", False):
                     print(f"[DB] Operation failed (attempt {attempt + 1}): {e}")
                 if attempt < max_retries - 1:
-                    # Force reconnection on next attempt
                     try:
                         await self.connection.close()
                     except (aiosqlite.OperationalError, sqlite3.OperationalError):
-                        pass  # Connection may already be broken
+                        pass
                     self.connection = None
                     await asyncio.sleep(0.5 * (attempt + 1))
                 else:
@@ -102,7 +98,6 @@ class dbClient:
         """Create the DB file and initial tables if they don't exist."""
         async def _setup_operation():
             async with self.connection.cursor() as cursor:
-                # Create tables
                 await cursor.execute("""
                 CREATE TABLE IF NOT EXISTS games (
                     game_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -169,7 +164,6 @@ class dbClient:
                 if "game_start_attempted" not in columns:
                     await cursor.execute("ALTER TABLE games ADD COLUMN game_start_attempted BOOLEAN DEFAULT 0;")
 
-                # Create the `players` table
                 await cursor.execute("""
                 CREATE TABLE IF NOT EXISTS players (
                     game_id INTEGER,
@@ -181,7 +175,6 @@ class dbClient:
                     FOREIGN KEY (game_id) REFERENCES games (game_id)
                 )
                 """)
-                # Create the `gameTimers` table
                 await cursor.execute("""
                 CREATE TABLE IF NOT EXISTS gameTimers (
                     game_id INTEGER PRIMARY KEY,
@@ -192,7 +185,6 @@ class dbClient:
                 )
                 """)
                 
-                # Add chess_clock_time_remaining column to players table if it doesn't exist
                 await cursor.execute("PRAGMA table_info(players)")
                 player_columns = [row[1] for row in await cursor.fetchall()]
                 if "chess_clock_time_remaining" not in player_columns:
@@ -259,11 +251,9 @@ class dbClient:
         ):
         """Insert a new game into the games table, with a limit on active games."""
 
-        # Check if the game name contains spaces
         if " " in game_name:
             raise Exception("Game name cannot contain spaces. Please use underscores or other characters instead.")
 
-        # Check for duplicate active game names
         async with self.connection.cursor() as cursor:
             query = "SELECT COUNT(*) FROM games WHERE game_name = :game_name AND game_active = 1;"
             await cursor.execute(query, {"game_name": game_name})
@@ -272,7 +262,6 @@ class dbClient:
             if duplicate_count > 0:
                 raise Exception(f"A game with the name '{game_name}' already exists and is active.")
 
-        # Check the number of active games
         async with self.connection.cursor() as cursor:
             await cursor.execute("SELECT COUNT(*) FROM games WHERE game_active = 1;")
             active_game_count = (await cursor.fetchone())[0]
@@ -280,11 +269,9 @@ class dbClient:
             if active_game_count >= max_active_games:
                 raise Exception(f"Cannot create a new game. The maximum number of active games ({max_active_games}) has been reached.")
 
-        # Assign a free port if not provided
         if game_port is None:
             game_port = await self.assign_free_port()
 
-        # Prepare query and parameters
         query = '''
         INSERT INTO games (
             game_name, game_port, game_era, game_map, game_mods, research_rate, research_random,
@@ -356,7 +343,6 @@ class dbClient:
 
 
 
-        # Insert the new game into the database
         async with self.connection.cursor() as cursor:
             await cursor.execute(query, params)
             await self.connection.commit()
@@ -456,7 +442,6 @@ class dbClient:
         """
         async def _operation():
             async with self.connection.cursor() as cursor:
-                # Reset the main timer
                 await cursor.execute(
                     """UPDATE gameTimers
                        SET remaining_time = timer_default,
@@ -465,7 +450,6 @@ class dbClient:
                     (game_id,)
                 )
                 
-                # Check if chess clock is active and get per-turn bonus
                 await cursor.execute(
                     """SELECT chess_clock_active, chess_clock_per_turn_time
                        FROM games
@@ -474,11 +458,9 @@ class dbClient:
                 )
                 game_info = await cursor.fetchone()
                 
-                if game_info and game_info[0] and game_info[1]:  # chess_clock_active and per_turn_time
+                if game_info and game_info[0] and game_info[1]:
                     per_turn_bonus = game_info[1]
                     
-                    # Add per-turn bonus to all players' chess clock time
-                    # Get all unique player_ids for this game
                     await cursor.execute(
                         """SELECT DISTINCT player_id FROM players 
                            WHERE game_id = ? AND currently_claimed = 1""",
@@ -489,7 +471,6 @@ class dbClient:
                     for player in players:
                         player_id = player[0]
                         
-                        # Find the nation with the highest chess clock time for this player
                         await cursor.execute(
                             """SELECT nation, chess_clock_time_remaining FROM players 
                                WHERE game_id = ? AND player_id = ? 
@@ -504,7 +485,6 @@ class dbClient:
                             current_time = max_time_nation[1]
                             new_time = current_time + per_turn_bonus
                             
-                            # Update only this nation's chess clock time
                             await cursor.execute(
                                 """UPDATE players 
                                    SET chess_clock_time_remaining = ? 
@@ -537,10 +517,8 @@ class dbClient:
                 await cursor.execute(query)
                 rows = await cursor.fetchall()
 
-                # Get column names for better readability
                 columns = [description[0] for description in cursor.description]
 
-                # Convert rows to a list of dictionaries
                 active_games = [dict(zip(columns, row)) for row in rows]
 
                 return active_games
@@ -588,7 +566,6 @@ class dbClient:
                 row = await cursor.fetchone()
 
                 if row:
-                    # Map the row to a dictionary for easier access
                     columns = [desc[0] for desc in cursor.description]
                     return dict(zip(columns, row))
                 return None
@@ -767,7 +744,6 @@ class dbClient:
                 await cursor.execute(query, params)
                 await self.connection.commit()
                 
-                # Return how many rows were affected
                 return cursor.rowcount
         except Exception as e:
             print(f"Failed to delete player nation {nation} for player {player_id} in game {game_id}: {e}")
@@ -794,7 +770,7 @@ class dbClient:
             async with self.connection.cursor() as cursor:
                 await cursor.execute(query, params)
                 rows = await cursor.fetchall()
-            return [row[0] for row in rows]  # Assuming rows are tuples
+            return [row[0] for row in rows]
         except Exception as e:
             print(f"Error fetching claimed nations for player {player_id} in game {game_id}: {e}")
             return []
@@ -821,7 +797,6 @@ class dbClient:
                 await cursor.execute(query, params)
                 rows = await cursor.fetchall()
             
-            # Construct a dictionary: {nation: [player_id1, player_id2, ...]}
             claimed_nations = {}
             for nation, player_id in rows:
                 if nation not in claimed_nations:
@@ -975,7 +950,6 @@ class dbClient:
             async with self.connection.cursor() as cursor:
                 if self.config and self.config.get("debug", False):
                     print(f"[DB] Executing get_active_game_channels query")
-                    # Test query to see if we can get anything from games table
                     await cursor.execute("SELECT COUNT(*) FROM games;")
                     test_result = await cursor.fetchone()
                     print(f"[DB] Total games in table: {test_result[0] if test_result else 'None'}")
@@ -987,7 +961,6 @@ class dbClient:
                 if self.config and self.config.get("debug", False):
                     print(f"[DB] Active games query returned {len(rows)} rows: {result}")
                     if len(rows) == 0:
-                        # Debug: check what's actually in the games table
                         await cursor.execute("SELECT game_id, channel_id, game_active FROM games LIMIT 5;")
                         debug_rows = await cursor.fetchall()
                         print(f"[DB] Debug - first 5 games: {debug_rows}")
@@ -1215,7 +1188,6 @@ class dbClient:
     async def increment_player_extensions(self, game_id: int, player_id: str):
         """Increment the extension count for a player in a specific game."""
         async def _operation():
-            # First get current player data
             query = """
             SELECT extensions FROM players 
             WHERE game_id = :game_id AND player_id = :player_id AND currently_claimed = 1
@@ -1225,7 +1197,6 @@ class dbClient:
                 player_entry = await cursor.fetchone()
                 
                 if player_entry:
-                    # Update extensions count
                     update_query = """
                     UPDATE players 
                     SET extensions = :extensions 
@@ -1266,7 +1237,6 @@ class dbClient:
                 await cursor.execute(query, {"game_id": game_id})
                 rows = await cursor.fetchall()
                 
-                # Convert to list of dicts for easier access
                 result = []
                 for row in rows:
                     result.append({
@@ -1282,20 +1252,17 @@ class dbClient:
         if not updates:
             return False
         
-        # Define allowed column names to prevent SQL injection
         ALLOWED_COLUMNS = {
             'game_name', 'game_era', 'game_map', 'game_mods', 'game_active',
             'game_running', 'process_pid', 'game_owner', 'creation_version',
             'game_type', 'game_winner', 'channel_id', 'role_id'
         }
         
-        # Validate all column names against allowlist
         invalid_columns = set(updates.keys()) - ALLOWED_COLUMNS
         if invalid_columns:
             raise ValueError(f"Invalid column names: {', '.join(invalid_columns)}")
             
         async def _operation():
-            # Build dynamic UPDATE query with validated column names
             set_clauses = [f"{key} = :{key}" for key in updates.keys()]
             query = f"""
             UPDATE games 
@@ -1303,7 +1270,6 @@ class dbClient:
             WHERE game_id = :game_id
             """
             
-            # Add game_id to parameters
             params = {**updates, 'game_id': game_id}
             
             async with self.connection.cursor() as cursor:
@@ -1319,7 +1285,6 @@ class dbClient:
             return []
             
         async def _operation():
-            # Create placeholders for IN clause
             placeholders = ','.join('?' * len(player_ids))
             query = f"""
             SELECT player_id FROM players 
@@ -1349,7 +1314,6 @@ class dbClient:
         """Update a player's chess clock time remaining. Updates only the record with the highest current time."""
         async def _operation():
             async with self.connection.cursor() as cursor:
-                # Find the nation record with the highest chess clock time for this player
                 await cursor.execute(
                     """SELECT nation, chess_clock_time_remaining FROM players 
                        WHERE game_id = ? AND player_id = ? 
@@ -1361,12 +1325,10 @@ class dbClient:
                 
                 if result:
                     nation_with_max_time = result[0]
-                    # Update only that specific nation record
                     await cursor.execute(
                         "UPDATE players SET chess_clock_time_remaining = ? WHERE game_id = ? AND player_id = ? AND nation = ?",
                         (time_remaining, game_id, player_id, nation_with_max_time)
                     )
-                    # Set other nation records for this player to 0
                     await cursor.execute(
                         "UPDATE players SET chess_clock_time_remaining = 0 WHERE game_id = ? AND player_id = ? AND nation != ?",
                         (game_id, player_id, nation_with_max_time)

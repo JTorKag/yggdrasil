@@ -37,7 +37,7 @@ def register_file_commands(bot):
                 def __init__(self, prompt_type: str):
                     super().__init__(
                         placeholder=f"Choose {'one or more' if multi_select else 'one'} {prompt_type}{'s' if multi_select else ''}...",
-                        min_values=0 if multi_select else 1,  # Allow zero selection if multi_select is True
+                        min_values=0 if multi_select else 1,
                         max_values=len(options) if multi_select else 1,
                         options=[
                             discord.SelectOption(
@@ -58,7 +58,6 @@ def register_file_commands(bot):
                 async def callback(self, interaction: discord.Interaction):
                     if not interaction.response.is_done():
                         await interaction.response.defer()
-                    # Process selected values: trim only if it's for maps
                     self.view.selected_names = [o.label for o in self.options if o.value in self.values]
                     self.view.selected_locations = [
                         v.split('/', 1)[-1] if prompt_type == "map" else v for v in self.values
@@ -155,34 +154,28 @@ def register_file_commands(bot):
     @require_game_channel(bot.config)
     @require_game_owner_or_admin(bot.config)
     async def select_map_command(interaction: discord.Interaction):
-        # Get the current game ID associated with the channel
         game_id = await bot.db_instance.get_game_id_by_channel(interaction.channel.id)
         if game_id is None:
             await interaction.response.send_message("This channel is not associated with any active game.", ephemeral=True)
             return
 
-        # Check if the game has already started
         game_info = await bot.db_instance.get_game_info(game_id)
         if game_info and game_info.get("game_started"):
             await interaction.response.send_message("The game has already started. You cannot change the map.", ephemeral=True)
             return
 
-        # Fetch the preselected map
         current_map = await bot.db_instance.get_map(game_id)
 
-        # Fetch available maps
         maps = bifrost.get_maps(config=bot.config)
 
-        # Add default options
         default_maps = [
             {"name": "Vanilla Small 10", "location": "vanilla_10", "yggemoji": ":dom6:", "yggdescr": "Small Lakes & One Cave"},
             {"name": "Vanilla Medium 15", "location": "vanilla_15", "yggemoji": ":dom6:", "yggdescr": "Small Lakes & One Cave"},
             {"name": "Vanilla Large 20", "location": "vanilla_20", "yggemoji": ":dom6:", "yggdescr": "Small Lakes & One Cave"},
             {"name": "Vanilla Enormous 25", "location": "vanilla_25", "yggemoji": ":dom6:", "yggdescr": "Small Lakes & One Cave"},
         ]
-        maps = default_maps + maps  # Prepend default maps
+        maps = default_maps + maps
 
-        # Preselect the current map
         selected_map, map_location = await create_dropdown(
             interaction, maps, "map", multi_select=False, preselected_values=[current_map] if current_map else []
         )
@@ -201,13 +194,11 @@ def register_file_commands(bot):
     @require_game_channel(bot.config)
     @require_game_owner_or_admin(bot.config)
     async def select_mods_command(interaction: discord.Interaction):
-        # Get the current game ID associated with the channel
         game_id = await bot.db_instance.get_game_id_by_channel(interaction.channel.id)
         if game_id is None:
             await interaction.response.send_message("This channel is not associated with any active game.", ephemeral=True)
             return
 
-        # Check if the game has already started or is running
         game_info = await bot.db_instance.get_game_info(game_id)
         if game_info:
             if game_info.get("game_started"):
@@ -217,23 +208,18 @@ def register_file_commands(bot):
                 await interaction.response.send_message("The game is currently running. You cannot change the mods.", ephemeral=True)
                 return
 
-        # Fetch the preselected mods
         current_mods = await bot.db_instance.get_mods(game_id)
 
-        # Fetch available mods
         mods = bifrost.get_mods(config=bot.config)
 
-        # Preselect the current mods
         selected_mods, mods_locations = await create_dropdown(
             interaction, mods, "mod", multi_select=True, preselected_values=current_mods
         )
 
         if selected_mods:
-            # Update mods with the selected ones
             await bot.db_instance.update_mods(game_id, mods_locations)
             await interaction.followup.send(f"You selected: {', '.join(selected_mods)}", ephemeral=True)
         else:
-            # Clear all mods if no selection was made
             await bot.db_instance.update_mods(game_id, [])
             await interaction.followup.send("No mods selected. All mods have been removed.", ephemeral=True)
 

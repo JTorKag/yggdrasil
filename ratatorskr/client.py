@@ -63,13 +63,11 @@ class discordClient(discord.Client):
             dict: A response dictionary indicating success or failure.
         """
         try:
-            # Retrieve the channel_id based on the game_id
             channel_id = await self.db_instance.get_channel_id_by_game(game_id)
             print(f"Channel ID for game {game_id}: {channel_id}")
             if not channel_id:
                 return {"status": "error", "message": "Invalid game ID or channel not found"}
 
-            # Fetch the channel and send the message
             channel = self.get_channel(channel_id) or await self.fetch_channel(channel_id)
             if channel:
                 await channel.send(message)
@@ -84,15 +82,12 @@ class discordClient(discord.Client):
         Handles the addition of a reaction to a message. Pins the message if the 📌 emoji is used.
         """
         if payload.emoji.name == "📌":
-            # Fetch the channel and message
             channel = self.get_channel(payload.channel_id) or await self.fetch_channel(payload.channel_id)
             message = await channel.fetch_message(payload.message_id)
 
-            # Check if the message is already pinned
             if not message.pinned:
                 try:
                     await message.pin()
-                    #print(f"Pinned message: {message.content}")
                 except discord.Forbidden:
                     print(f"Permission denied to pin messages in channel {channel.name}.")
                 except discord.HTTPException as e:
@@ -103,14 +98,11 @@ class discordClient(discord.Client):
         Handles the removal of a reaction from a message. Unpins the message if the 📌 emoji is removed.
         """
         if payload.emoji.name == "📌":
-            # Fetch the channel and message
             channel = self.get_channel(payload.channel_id) or await self.fetch_channel(payload.channel_id)
             message = await channel.fetch_message(payload.message_id)
 
-            # Check if the message is currently pinned
             if message.pinned:
                 try:
-                    # Unpin the message
                     await message.unpin()
                     print(f"Unpinned message: {message.content}")
                 except discord.Forbidden:
@@ -125,7 +117,6 @@ class discordClient(discord.Client):
         if self.config and self.config.get("debug", False):
             print("[CLIENT] Starting setup_hook...")
         
-        # Register all command modules
         if self.config and self.config.get("debug", False):
             print("[CLIENT] Registering game management commands...")
         game_management.register_game_management_commands(self)
@@ -147,13 +138,11 @@ class discordClient(discord.Client):
         if self.config and self.config.get("debug", False):
             print("[CLIENT] All commands registered")
         
-        # Sync the command tree with Discord
         if self.config and self.config.get("debug", False):
             print("[CLIENT] Syncing command tree with Discord...")
         await self.tree.sync(guild=discord.Object(id=self.guild_id))
         print("Commands synced!")
         
-        # Signal that the bot is ready
         if self.config and self.config.get("debug", False):
             print("[CLIENT] Setting bot ready signal...")
         if self.bot_ready_signal:
