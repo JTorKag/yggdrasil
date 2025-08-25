@@ -61,7 +61,8 @@ def register_admin_commands(bot):
                     # Delete the role
                     await role.delete()
                     if bot.config and bot.config.get("debug", False):
-                        print(f"[DEBUG] Deleted role {role.name}")
+                        if bot.config and bot.config.get("debug", False):
+                            print(f"[DEBUG] Deleted role {role.name}")
 
             # Keep player records for historical purposes - don't clear them
             
@@ -70,14 +71,17 @@ def register_admin_commands(bot):
                 async with bot.db_instance.connection.execute("DELETE FROM gameTimers WHERE game_id = ?", (game_id,)) as cursor:
                     await bot.db_instance.connection.commit()
                 if bot.config and bot.config.get("debug", False):
-                    print(f"[DEBUG] Deleted timers for game {game_id}")
+                    if bot.config and bot.config.get("debug", False):
+                        print(f"[DEBUG] Deleted timers for game {game_id}")
             except Exception as e:
                 if bot.config and bot.config.get("debug", False):
-                    print(f"[DEBUG] Failed to delete timers for game {game_id}: {e}")
+                    if bot.config and bot.config.get("debug", False):
+                        print(f"[DEBUG] Failed to delete timers for game {game_id}: {e}")
             
             # Keep game record for historical purposes - don't delete it
             if bot.config and bot.config.get("debug", False):
-                print(f"[DEBUG] Preserving game {game_id} record for historical purposes")
+                if bot.config and bot.config.get("debug", False):
+                    print(f"[DEBUG] Preserving game {game_id} record for historical purposes")
             
             # Delete the Discord channel
             channel = interaction.channel

@@ -46,7 +46,8 @@ class TimerManager:
                 games_needing_monitoring = await self.db_instance.get_games_needing_turn_monitoring()
                 for game in games_needing_monitoring:
                     game_id = game["game_id"]
-                    print(f"[DEBUG] Checking turn transition for game ID {game_id} (game_start_attempted=true, game_started=false)")
+                    if self.config and self.config.get("debug", False):
+                        print(f"[DEBUG] Checking turn transition for game ID {game_id} (game_start_attempted=true, game_started=false)")
                     await self.check_turn_transition(game_id)
 
                 active_timers = await self.db_instance.get_active_timers()
@@ -64,16 +65,19 @@ class TimerManager:
                     new_remaining_time = max(0, remaining_time - 1)
 
                     if new_remaining_time == 3600:
-                        print(f"[DEBUG] Timer for game ID {game_id} hit 1 hour. Checking for unplayed nations.")
+                        if self.config and self.config.get("debug", False):
+                            print(f"[DEBUG] Timer for game ID {game_id} hit 1 hour. Checking for unplayed nations.")
                         await self.alert_unplayed_nations(game_id, game_info)
 
                     if new_remaining_time == 0:
-                        print(f"[DEBUG] Timer for game ID {game_id} reached 0. Forcing host.")
+                        if self.config and self.config.get("debug", False):
+                            print(f"[DEBUG] Timer for game ID {game_id} reached 0. Forcing host.")
                         try:
                             await self.nidhogg.force_game_host(game_id, self.config, self.db_instance)
 
                             await self.db_instance.reset_timer_for_new_turn(game_id, self.config)
-                            print(f"[DEBUG] Timer for game ID {game_id} reset for the next turn.")
+                            if self.config and self.config.get("debug", False):
+                                print(f"[DEBUG] Timer for game ID {game_id} reset for the next turn.")
                         except Exception as e:
                             print(f"[ERROR] Failed to force host for game ID {game_id}: {e}")
                     else:
@@ -139,7 +143,8 @@ class TimerManager:
             if unplayed_nations:
                 channel_id = game_info.get("channel_id")
                 if not channel_id:
-                    print(f"[DEBUG] Game ID {game_id} has no associated channel ID.")
+                    if self.config and self.config.get("debug", False):
+                        print(f"[DEBUG] Game ID {game_id} has no associated channel ID.")
                     return
 
                 channel = self.discord_bot.get_channel(int(channel_id))
@@ -159,7 +164,8 @@ class TimerManager:
                 embed.timestamp = discord.utils.utcnow()
 
                 await channel.send(embed=embed)
-                print(f"[DEBUG] Alert sent to game ID {game_id} for unplayed nations: {', '.join(unplayed_nations)}")
+                if self.config and self.config.get("debug", False):
+                    print(f"[DEBUG] Alert sent to game ID {game_id} for unplayed nations: {', '.join(unplayed_nations)}")
         except Exception as e:
             print(f"[ERROR] Failed to alert unplayed nations for game ID {game_id}: {e}")
 
@@ -175,7 +181,8 @@ class TimerManager:
         """
         Gracefully stop the timer loop.
         """
-        print("[DEBUG] TimerManager stopping...")
+        if self.config and self.config.get("debug", False):
+            print("[DEBUG] TimerManager stopping...")
         self.running = False
 
     async def check_turn_transition(self, game_id):
@@ -200,26 +207,32 @@ class TimerManager:
         try:
             from bifrost import bifrost
             
-            print(f"[DEBUG] Checking turn transition for game ID {game_id}")
+            if self.config and self.config.get("debug", False):
+                print(f"[DEBUG] Checking turn transition for game ID {game_id}")
             
             status_data = await bifrost.read_statusdump_file(game_id, self.db_instance, self.config)
             if not status_data:
-                print(f"[DEBUG] No statusdump data for game ID {game_id}, likely still in lobby")
+                if self.config and self.config.get("debug", False):
+                    print(f"[DEBUG] No statusdump data for game ID {game_id}, likely still in lobby")
                 return
             
             current_turn = status_data.get("turn", -1)
             last_known_turn = self.game_turns.get(game_id, -1)
             
-            print(f"[DEBUG] Game ID {game_id}: current_turn={current_turn}, last_known_turn={last_known_turn}")
+            if self.config and self.config.get("debug", False):
+                print(f"[DEBUG] Game ID {game_id}: current_turn={current_turn}, last_known_turn={last_known_turn}")
             
             if (last_known_turn == -1 and current_turn == 1) or (last_known_turn == -1 and current_turn >= 1):
                 if current_turn == 1:
-                    print(f"[DEBUG] Detected lobby → turn 1 transition for game ID {game_id}")
+                    if self.config and self.config.get("debug", False):
+                        print(f"[DEBUG] Detected lobby → turn 1 transition for game ID {game_id}")
                 else:
-                    print(f"[DEBUG] Caught missed turn 1 transition for game ID {game_id} (current turn: {current_turn})")
+                    if self.config and self.config.get("debug", False):
+                        print(f"[DEBUG] Caught missed turn 1 transition for game ID {game_id} (current turn: {current_turn})")
                 await self.handle_game_start_notification(game_id)
             else:
-                print(f"[DEBUG] No transition detected for game ID {game_id}")
+                if self.config and self.config.get("debug", False):
+                    print(f"[DEBUG] No transition detected for game ID {game_id}")
             
             self.game_turns[game_id] = current_turn
             
@@ -272,7 +285,8 @@ class TimerManager:
                 remaining_time = 3600
 
             await self.db_instance.set_game_started_value(game_id, True)
-            print(f"[DEBUG] Game ID {game_id} marked as started (turn 1 reached). Both flags now true = monitoring complete.")
+            if self.config and self.config.get("debug", False):
+                print(f"[DEBUG] Game ID {game_id} marked as started (turn 1 reached). Both flags now true = monitoring complete.")
 
             from datetime import datetime, timedelta, timezone
             current_time = datetime.now(timezone.utc)
@@ -300,7 +314,8 @@ class TimerManager:
                 await channel.send(content=role_mention, embed=embed)
             else:
                 await channel.send(embed=embed)
-            print(f"[DEBUG] Game start notification sent for game ID {game_id}")
+            if self.config and self.config.get("debug", False):
+                print(f"[DEBUG] Game start notification sent for game ID {game_id}")
 
         except Exception as e:
             print(f"[ERROR] Error sending game start notification for game ID {game_id}: {e}")
@@ -420,7 +435,8 @@ class TimerManager:
             else:
                 await channel.send(embed=embed)
             
-            print(f"[DEBUG] Game death notification sent for game ID {game_id}")
+            if self.config and self.config.get("debug", False):
+                print(f"[DEBUG] Game death notification sent for game ID {game_id}")
 
         except Exception as e:
             print(f"[ERROR] Error sending game death notification for game ID {game_id}: {e}")

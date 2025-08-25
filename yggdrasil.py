@@ -38,12 +38,14 @@ def initialize_bot(config, db_instance, bot_ready_signal):
         print("[MAIN] Discord bot instance created")
     return bot
 
-async def handle_terminal_input(db_instance, bot_ready_signal, shutdown_signal):
+async def handle_terminal_input(db_instance, bot_ready_signal, shutdown_signal, config=None):
     """Handles terminal input commands."""
-    print("[DEBUG] Terminal input handler starting...")
-    print("[DEBUG] Waiting for bot to be ready...")
+    if config and config.get("debug", False):
+        print("[DEBUG] Terminal input handler starting...")
+        print("[DEBUG] Waiting for bot to be ready...")
     await bot_ready_signal.wait()
-    print("[DEBUG] Bot ready! Terminal input is now active. Type 'help' for commands.")
+    if config and config.get("debug", False):
+        print("[DEBUG] Bot ready! Terminal input is now active. Type 'help' for commands.")
     while not shutdown_signal.is_set():
         try:
             user_input = await asyncio.to_thread(input, "\nEnter a command: ")
@@ -165,7 +167,10 @@ async def main():
     if config and config.get("debug", False):
         print("[MAIN] Setting up database tables...")
     await db_instance.setup_db()
-    print("[DB] Database tables initialized")
+    if config and config.get("debug", False):
+        print("[DB] Database tables initialized")
+    else:
+        print("Database setup completed successfully.")
     
     if config and config.get("debug", False):
         print("[MAIN] Initializing Discord bot...")
@@ -194,24 +199,12 @@ async def main():
         print(f"[INFO] Discord bot connected as {discordBot.user}")
         print(f"[INFO] Connected to guild: {discordBot.get_guild(config.get('guild_id'))}")
         
-        if not os.getenv('SKIP_SYNC'):
-            print("Trying to sync discord bot commands")
-            try:
-                await asyncio.wait_for(
-                    discordBot.tree.sync(guild=discord.Object(id=config.get('guild_id'))),
-                    timeout=30.0
-                )
-                print("Discord commands synced!")
-            except asyncio.TimeoutError:
-                print("Warning: Command sync timed out after 30 seconds, but continuing...")
-            except Exception as e:
-                print(f"Error syncing commands: {e}")
-        else:
-            print("Skipping command sync (SKIP_SYNC=1)")
+        # Commands are synced in setup_hook(), not here
         
         if bot_ready_signal:
             bot_ready_signal.set()
-            print("[DEBUG] Bot ready signal set!")
+            if config and config.get("debug", False):
+                print("[DEBUG] Bot ready signal set!")
         
     @discordBot.event
     async def on_resumed():
@@ -253,7 +246,7 @@ async def main():
         print("[MAIN] Creating tasks for all services...")
     tasks = [
         asyncio.create_task(discordBot.start(config.get("bot_token"))),
-        asyncio.create_task(handle_terminal_input(db_instance, bot_ready_signal, shutdown_signal)),
+        asyncio.create_task(handle_terminal_input(db_instance, bot_ready_signal, shutdown_signal, config)),
         asyncio.create_task(start_api_server()),
         asyncio.create_task(timer_manager.start_timers()),
     ]

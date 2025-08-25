@@ -125,14 +125,14 @@ def register_player_commands(bot):
 
             message = f"You have successfully claimed {nation_name} and have been assigned the role '{role_name}'."
             
-            if chess_clock_active and chess_clock_time > 0:
-                if game_info.get("game_type", "").lower() == "blitz":
-                    time_display = f"{chess_clock_time / 60:.1f} minutes"
-                else:
-                    time_display = f"{chess_clock_time / 3600:.1f} hours"
-                message += f"\n⏱️ You have been given {time_display} of chess clock time."
-            elif chess_clock_active and player_has_nations:
-                message += f"\n⏱️ Chess clock time unchanged (you already have nations claimed)."
+            if chess_clock_active:
+                starting_time = game_info.get("chess_clock_starting_time", 0)
+                if starting_time > 0:
+                    if game_info.get("game_type", "").lower() == "blitz":
+                        time_display = f"{starting_time / 60:.1f} minutes"
+                    else:
+                        time_display = f"{starting_time / 3600:.1f} hours"
+                    message += f"\n⏱️ You will receive {time_display} of chess clock time when the game starts."
             
             await interaction.followup.send(message)
         except Exception as e:

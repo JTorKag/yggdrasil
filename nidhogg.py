@@ -115,9 +115,11 @@ class nidhogg:
             
             if not game_details.get("game_started", False):
                 command.append("--statusdump")
-                print(f"[DEBUG] Added --statusdump flag for non-started game {game_id}")
+                if config and config.get("debug", False):
+                    print(f"[DEBUG] Added --statusdump flag for non-started game {game_id}")
             else:
-                print(f"[DEBUG] Skipped --statusdump flag for already-started game {game_id}")
+                if config and config.get("debug", False):
+                    print(f"[DEBUG] Skipped --statusdump flag for already-started game {game_id}")
 
             if not isinstance(game_id, int) or game_id <= 0:
                 raise ValueError(f"Invalid game_id: {game_id}")
@@ -125,7 +127,8 @@ class nidhogg:
             screen_name = f"dom_{game_id}"
             screen_command = ["screen", "-dmS", screen_name] + command
 
-            print(f"[DEBUG] Base command: {shlex.join(command)}")
+            if config and config.get("debug", False):
+                print(f"[DEBUG] Base command: {shlex.join(command)}")
 
             dom_data_folder = config.get("dom_data_folder", ".")
             savedgames_path = Path(dom_data_folder) / "savedgames" / game_name
@@ -134,13 +137,15 @@ class nidhogg:
             os.chmod(savedgames_path, 0o755)
             
             actual_perms = oct(savedgames_path.stat().st_mode)[-3:]
-            print(f"[DEBUG] Created {savedgames_path} with permissions: {actual_perms}")
+            if config and config.get("debug", False):
+                print(f"[DEBUG] Created {savedgames_path} with permissions: {actual_perms}")
             
             log_file = savedgames_path / "dominions_error.log"
             
             screen_command_with_log = ["screen", "-dmS", screen_name, "-L", "-Logfile", str(log_file)] + command
             
-            print(f"[DEBUG] Screen command with logging: {shlex.join(screen_command_with_log)}")
+            if config and config.get("debug", False):
+                print(f"[DEBUG] Screen command with logging: {shlex.join(screen_command_with_log)}")
             
             screen_process = subprocess.Popen(
                 screen_command_with_log,
@@ -232,12 +237,14 @@ class nidhogg:
             for png_file in png_files:
                 try:
                     png_file.unlink()
-                    print(f"[DEBUG] Deleted statusdump PNG file: {png_file.name}")
+                    if config and config.get("debug", False):
+                        print(f"[DEBUG] Deleted statusdump PNG file: {png_file.name}")
                 except Exception as e:
                     print(f"[WARNING] Could not delete PNG file {png_file.name}: {e}")
             
             if png_files:
-                print(f"[DEBUG] Cleaned up {len(png_files)} PNG files from statusdump")
+                if config and config.get("debug", False):
+                    print(f"[DEBUG] Cleaned up {len(png_files)} PNG files from statusdump")
 
             domcmd_path = savedgames_path / "domcmd"
 

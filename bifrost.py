@@ -112,7 +112,8 @@ class bifrost:
         if not config['primary_bot_channel']:
             raise ValueError("primary_bot_channel cannot be empty")
         
-        print("[CONFIG] Configuration validated successfully")
+        if config.get("debug", False):
+            print("[CONFIG] Configuration validated successfully")
         return config
         
     @staticmethod
@@ -813,7 +814,6 @@ class bifrost:
             return
 
 
-        print("[bifrost] Disabled recursive chmod operations for non-sudo operation")
 
         observer = bifrost.watch_folder(dom_data_folder)
 

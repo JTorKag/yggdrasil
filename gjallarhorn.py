@@ -76,7 +76,8 @@ class APIHandler:
                 try:
                     timer_default = timer_info["timer_default"]
                     await self.discord_bot.db_instance.reset_timer_for_new_turn(game_id, self.config)
-                    print(f"[DEBUG] Timer for game ID {game_id} reset for new turn (including chess clock bonuses).")
+                    if self.config and self.config.get("debug", False):
+                        print(f"[DEBUG] Timer for game ID {game_id} reset for new turn (including chess clock bonuses).")
                 except Exception as e:
                     print(f"[ERROR] Failed to reset timer for game ID {game_id}: {e}")
                     raise HTTPException(status_code=500, detail="Failed to reset the timer.")

@@ -492,7 +492,7 @@ class dbClient:
                                 (new_time, game_id, player_id, nation_name)
                             )
                             
-                            if config and config.get("debug"):
+                            if config and config.get("debug", False):
                                 print(f"[DEBUG] Added {per_turn_bonus}s chess clock bonus to player {player_id} ({nation_name}), new time: {new_time}s")
                 
                 await self.connection.commit()

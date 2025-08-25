@@ -30,7 +30,6 @@ def register_game_management_commands(bot):
         interaction: discord.Interaction,
         game_name: str,
         game_type: str,
-        default_timer: float,
         game_era: str,
         research_random: str,
         global_slots: int,
@@ -38,12 +37,13 @@ def register_game_management_commands(bot):
         disicples: str,
         story_events: str,
         no_going_ai: str,
+        player_control_timers: str,
+        default_timer: float,
         master_pass: str,
         lv1_thrones: int,
         lv2_thrones: int,
         lv3_thrones: int,
-        points_to_win: int,
-        player_control_timers: str
+        points_to_win: int
     ):
         try:
             # Defer interaction to prevent timeout
@@ -255,7 +255,6 @@ def register_game_management_commands(bot):
     async def edit_game_command(
         interaction: discord.Interaction,
         game_type: str,
-        default_timer: float,
         game_era: str,
         research_random: str,
         global_slots: int,
@@ -263,12 +262,13 @@ def register_game_management_commands(bot):
         disicples: str,
         story_events: str,
         no_going_ai: str,
+        player_control_timers: str,
+        default_timer: float,
         master_pass: str,
         lv1_thrones: int,
         lv2_thrones: int,
         lv3_thrones: int,
-        points_to_win: int,
-        player_control_timers: str
+        points_to_win: int
     ):
         """
         Fully edits all properties of an existing game. All fields are required.
@@ -576,7 +576,27 @@ def register_game_management_commands(bot):
 
         # Set game_start_attempted flag to begin monitoring for turn 1 transition
         await bot.db_instance.set_game_start_attempted(game_id, True)
-        print(f"[DEBUG] Set game_start_attempted=True for game ID {game_id}")
+        if bot.config and bot.config.get("debug", False):
+            if bot.config and bot.config.get("debug", False):
+                print(f"[DEBUG] Set game_start_attempted=True for game ID {game_id}")
+
+        # Initialize chess clock times for all players when start-game is used
+        chess_clock_active = game_info.get("chess_clock_active", False)
+        if chess_clock_active:
+            starting_time = game_info.get("chess_clock_starting_time", 0)
+            if starting_time > 0:
+                try:
+                    async with bot.db_instance.connection.execute(
+                        "UPDATE players SET chess_clock_time_remaining = ? WHERE game_id = ? AND chess_clock_time_remaining = 0",
+                        (starting_time, game_id)
+                    ) as cursor:
+                        await bot.db_instance.connection.commit()
+                        updated_count = cursor.rowcount
+                        if bot.config and bot.config.get("debug", False):
+                            if bot.config and bot.config.get("debug", False):
+                                print(f"[DEBUG] Initialized chess clock for {updated_count} players with {starting_time} seconds")
+                except Exception as e:
+                    print(f"[ERROR] Failed to initialize chess clock times: {e}")
 
         # Use Nidhogg to force host via domcmd
         try:
@@ -721,10 +741,12 @@ def register_game_management_commands(bot):
             try:
                 await bot.nidhogg.kill_game_lobby(game_id, bot.db_instance)
                 if bot.config and bot.config.get("debug", False):
-                    print(f"[DEBUG] Successfully killed game process for game {game_id}")
+                    if bot.config and bot.config.get("debug", False):
+                        print(f"[DEBUG] Successfully killed game process for game {game_id}")
             except Exception as kill_error:
                 if bot.config and bot.config.get("debug", False):
-                    print(f"[DEBUG] Failed to kill game process (likely already dead): {kill_error}")
+                    if bot.config and bot.config.get("debug", False):
+                        print(f"[DEBUG] Failed to kill game process (likely already dead): {kill_error}")
                 # Continue anyway - the game process might already be dead
             
             await bot.db_instance.update_game_running(game_id, False)
@@ -763,20 +785,24 @@ def register_game_management_commands(bot):
             try:
                 players = await bot.db_instance.get_players_in_game(game_id)
                 if bot.config and bot.config.get("debug", False):
-                    print(f"[DEBUG] Autocomplete found {len(players) if players else 0} players for game {game_id}")
+                    if bot.config and bot.config.get("debug", False):
+                        print(f"[DEBUG] Autocomplete found {len(players) if players else 0} players for game {game_id}")
                     if players:
-                        print(f"[DEBUG] Players: {players}")
+                        if bot.config and bot.config.get("debug", False):
+                            print(f"[DEBUG] Players: {players}")
                 
                 seen_players = set()
                 for player in players:
                     player_id = player["player_id"]
                     nation_name = player["nation"]
                     if bot.config and bot.config.get("debug", False):
-                        print(f"[DEBUG] Processing player {player_id} with nation {nation_name}")
+                        if bot.config and bot.config.get("debug", False):
+                            print(f"[DEBUG] Processing player {player_id} with nation {nation_name}")
                     
                     if player_id in seen_players:
                         if bot.config and bot.config.get("debug", False):
-                            print(f"[DEBUG] Skipping duplicate player {player_id}")
+                            if bot.config and bot.config.get("debug", False):
+                                print(f"[DEBUG] Skipping duplicate player {player_id}")
                         continue
                     
                     seen_players.add(player_id)
@@ -786,32 +812,39 @@ def register_game_management_commands(bot):
                             choice_name = f"{user.display_name}"
                             choices.append(discord.app_commands.Choice(name=choice_name, value=player_id))
                             if bot.config and bot.config.get("debug", False):
-                                print(f"[DEBUG] Added choice: {choice_name} with value: {player_id}")
+                                if bot.config and bot.config.get("debug", False):
+                                    print(f"[DEBUG] Added choice: {choice_name} with value: {player_id}")
                         else:
                             choice_name = f"Unknown ({player_id})"
                             choices.append(discord.app_commands.Choice(name=choice_name, value=player_id))
                             if bot.config and bot.config.get("debug", False):
-                                print(f"[DEBUG] Added unknown choice: {choice_name} with value: {player_id}")
+                                if bot.config and bot.config.get("debug", False):
+                                    print(f"[DEBUG] Added unknown choice: {choice_name} with value: {player_id}")
                     except ValueError as e:
                         if bot.config and bot.config.get("debug", False):
-                            print(f"[DEBUG] ValueError processing player {player_id}: {e}")
+                            if bot.config and bot.config.get("debug", False):
+                                print(f"[DEBUG] ValueError processing player {player_id}: {e}")
                         continue
                     except Exception as e:
                         if bot.config and bot.config.get("debug", False):
-                            print(f"[DEBUG] Exception adding choice for player {player_id}: {e}")
+                            if bot.config and bot.config.get("debug", False):
+                                print(f"[DEBUG] Exception adding choice for player {player_id}: {e}")
                         continue
             except Exception as e:
                 if bot.config and bot.config.get("debug", False):
-                    print(f"[DEBUG] Exception in autocomplete: {e}")
+                    if bot.config and bot.config.get("debug", False):
+                        print(f"[DEBUG] Exception in autocomplete: {e}")
                 pass
 
             if current:
                 choices = [choice for choice in choices if current.lower() in choice.name.lower()]
                 if bot.config and bot.config.get("debug", False):
-                    print(f"[DEBUG] Filtered choices for '{current}': {len(choices)} choices")
+                    if bot.config and bot.config.get("debug", False):
+                        print(f"[DEBUG] Filtered choices for '{current}': {len(choices)} choices")
             
             if bot.config and bot.config.get("debug", False):
-                print(f"[DEBUG] Returning {len(choices)} choices: {[choice.name for choice in choices]}")
+                if bot.config and bot.config.get("debug", False):
+                    print(f"[DEBUG] Returning {len(choices)} choices: {[choice.name for choice in choices]}")
             
             return choices[:25]
         except Exception:
@@ -845,17 +878,17 @@ def register_game_management_commands(bot):
     @require_game_channel(bot.config)
     @require_game_owner_or_admin(bot.config)
     async def force_host_command(interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer()
         game_id = await bot.db_instance.get_game_id_by_channel(interaction.channel_id)
         if not game_id:
-            await interaction.followup.send("No game is associated with this channel.", ephemeral=True)
+            await interaction.followup.send("No game is associated with this channel.")
             return
         
         try:
             await bot.nidhogg.force_game_host(game_id, bot.config, bot.db_instance)
-            await interaction.followup.send(f"Game ID {game_id} has been forced to host.", ephemeral=True)
+            await interaction.followup.send(f"Game ID {game_id} has been forced to host.")
         except Exception as e:
-            await interaction.followup.send(f"Failed to force host: {e}", ephemeral=True)
+            await interaction.followup.send(f"Failed to force host: {e}")
 
     @bot.tree.command(
         name="player-extension-rules",
@@ -1006,7 +1039,7 @@ def register_game_management_commands(bot):
                 f"✅ Chess clock mode enabled for **{game_name}**:\n"
                 f"• Starting time: {starting_time:g} {time_unit}\n"
                 f"• Per-turn bonus: {per_turn_bonus:g} {time_unit}\n\n"
-                f"Players will receive their starting time when they claim nations."
+                f"Players will receive their starting time when the game starts."
             )
             
         except Exception as e:
