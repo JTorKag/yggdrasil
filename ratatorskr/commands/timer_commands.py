@@ -178,7 +178,7 @@ def register_timer_commands(bot):
                 time_unit = "hours"
 
             if is_player and time_value > 0:
-                await bot.db_instance.increment_player_extensions(game_id, str(interaction.user.id))
+                await bot.db_instance.increment_player_extensions(game_id, str(interaction.user.id), added_seconds)
 
             new_remaining_time = max(0, timer_info["remaining_time"] + added_seconds)
 

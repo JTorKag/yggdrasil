@@ -692,26 +692,130 @@ def register_game_management_commands(bot):
 
     @bot.tree.command(
         name="end-game",
-        description="Ends the current game.",
+        description="Ends the game but keeps the lobby active.",
         guild=discord.Object(id=bot.guild_id)
     )
     @require_game_channel(bot.config)
     @require_game_owner_or_admin(bot.config)
-    async def end_game_command(interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
+    async def end_game_command(interaction: discord.Interaction, game_winner: str, confirm_game_name: str):
+        await interaction.response.defer()
+        
         game_id = await bot.db_instance.get_game_id_by_channel(interaction.channel_id)
         if not game_id:
-            await interaction.followup.send("No game is associated with this channel.", ephemeral=True)
+            await interaction.followup.send("No game lobby is associated with this channel.")
+            return
+
+        game_info = await bot.db_instance.get_game_info(game_id)
+        if not game_info:
+            await interaction.followup.send("Game information not found.")
+            return
+
+        if confirm_game_name != game_info["game_name"]:
+            await interaction.followup.send(
+                f"The confirmation name '{confirm_game_name}' does not match the actual game name '{game_info['game_name']}'."
+            )
             return
         
-        # Kill the game process
         try:
-            await bot.nidhogg.kill_game_lobby(game_id, bot.db_instance)
+            # Try to kill the game process, but don't fail if it's already dead
+            try:
+                await bot.nidhogg.kill_game_lobby(game_id, bot.db_instance)
+                if bot.config and bot.config.get("debug", False):
+                    print(f"[DEBUG] Successfully killed game process for game {game_id}")
+            except Exception as kill_error:
+                if bot.config and bot.config.get("debug", False):
+                    print(f"[DEBUG] Failed to kill game process (likely already dead): {kill_error}")
+                # Continue anyway - the game process might already be dead
+            
             await bot.db_instance.update_game_running(game_id, False)
             await bot.db_instance.set_timer_running(game_id, False)
-            await interaction.followup.send(f"Game ID {game_id} has been ended.", ephemeral=True)
+            await bot.db_instance.update_game_property(game_id, "game_active", False)
+            
+            if game_winner == "-666":
+                winner_text = "Everybody Lost"
+                winner_value = -666
+            else:
+                winner_value = int(game_winner)
+                try:
+                    user = interaction.guild.get_member(winner_value) or await interaction.client.fetch_user(winner_value)
+                    winner_text = user.display_name if user else f"Player {game_winner}"
+                except:
+                    winner_text = f"Player {game_winner}"
+            
+            import aiosqlite
+            query = "UPDATE games SET game_winner = ? WHERE game_id = ?"
+            async with bot.db_instance.connection.execute(query, (winner_value, game_id)) as cursor:
+                await bot.db_instance.connection.commit()
+            
+            await interaction.followup.send(f"Game {game_info['game_name']} has been successfully ended. Winner: {winner_text}.")
         except Exception as e:
-            await interaction.followup.send(f"Failed to end game: {e}", ephemeral=True)
+            await interaction.followup.send(f"Failed to end the game: {e}")
+
+    @end_game_command.autocomplete("game_winner")
+    async def game_winner_autocomplete(interaction: discord.Interaction, current: str):
+        try:
+            game_id = await bot.db_instance.get_game_id_by_channel(interaction.channel_id)
+            if not game_id:
+                return []
+
+            choices = [discord.app_commands.Choice(name="Everybody Lost", value="-666")]
+            
+            try:
+                players = await bot.db_instance.get_players_in_game(game_id)
+                if bot.config and bot.config.get("debug", False):
+                    print(f"[DEBUG] Autocomplete found {len(players) if players else 0} players for game {game_id}")
+                    if players:
+                        print(f"[DEBUG] Players: {players}")
+                
+                seen_players = set()
+                for player in players:
+                    player_id = player["player_id"]
+                    nation_name = player["nation"]
+                    if bot.config and bot.config.get("debug", False):
+                        print(f"[DEBUG] Processing player {player_id} with nation {nation_name}")
+                    
+                    if player_id in seen_players:
+                        if bot.config and bot.config.get("debug", False):
+                            print(f"[DEBUG] Skipping duplicate player {player_id}")
+                        continue
+                    
+                    seen_players.add(player_id)
+                    try:
+                        user = interaction.guild.get_member(int(player_id)) or await interaction.client.fetch_user(int(player_id))
+                        if user:
+                            choice_name = f"{user.display_name}"
+                            choices.append(discord.app_commands.Choice(name=choice_name, value=player_id))
+                            if bot.config and bot.config.get("debug", False):
+                                print(f"[DEBUG] Added choice: {choice_name} with value: {player_id}")
+                        else:
+                            choice_name = f"Unknown ({player_id})"
+                            choices.append(discord.app_commands.Choice(name=choice_name, value=player_id))
+                            if bot.config and bot.config.get("debug", False):
+                                print(f"[DEBUG] Added unknown choice: {choice_name} with value: {player_id}")
+                    except ValueError as e:
+                        if bot.config and bot.config.get("debug", False):
+                            print(f"[DEBUG] ValueError processing player {player_id}: {e}")
+                        continue
+                    except Exception as e:
+                        if bot.config and bot.config.get("debug", False):
+                            print(f"[DEBUG] Exception adding choice for player {player_id}: {e}")
+                        continue
+            except Exception as e:
+                if bot.config and bot.config.get("debug", False):
+                    print(f"[DEBUG] Exception in autocomplete: {e}")
+                pass
+
+            if current:
+                choices = [choice for choice in choices if current.lower() in choice.name.lower()]
+                if bot.config and bot.config.get("debug", False):
+                    print(f"[DEBUG] Filtered choices for '{current}': {len(choices)} choices")
+            
+            if bot.config and bot.config.get("debug", False):
+                print(f"[DEBUG] Returning {len(choices)} choices: {[choice.name for choice in choices]}")
+            
+            return choices[:25]
+        except Exception:
+            return []
 
     @bot.tree.command(
         name="kill",

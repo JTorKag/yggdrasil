@@ -1185,8 +1185,8 @@ class dbClient:
         
         return await self._execute_with_retry(_operation)
 
-    async def increment_player_extensions(self, game_id: int, player_id: str):
-        """Increment the extension count for a player in a specific game."""
+    async def increment_player_extensions(self, game_id: int, player_id: str, added_seconds: int = 0):
+        """Add extension time in seconds for a player in a specific game."""
         async def _operation():
             query = """
             SELECT extensions FROM players 
@@ -1203,7 +1203,7 @@ class dbClient:
                     WHERE game_id = :game_id AND player_id = :player_id AND currently_claimed = 1
                     """
                     await cursor.execute(update_query, {
-                        "extensions": player_entry[0] + 1,
+                        "extensions": player_entry[0] + added_seconds,
                         "game_id": game_id,
                         "player_id": player_id
                     })
