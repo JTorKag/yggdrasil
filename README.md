@@ -1,11 +1,45 @@
 
 # **Yggdrasil**
 
-Yggdrasil is a robust Discord bot and game management system tailored for Dominions 6. It includes a suite of tools for managing multiplayer games, game timers, backups, and player interactions, all while leveraging a FastAPI-based API for automation and notifications.
+Yggdrasil is a comprehensive Discord bot and automated game server management system designed specifically for hosting Dominions 6 multiplayer games. Named after the Norse world tree, this system serves as the central hub connecting players, game servers, file management, timers, and notifications in a seamless automated workflow.
 
-This was half a project in "can I?" and half to solve a hosting games on a discord server. It was built from the start with the intention of it being a project anyone could clone and spin up for their own community. It's currently running but has yet to be put through the paces to be really tested. Use at your own risk. 
+## **What Yggdrasil Does**
 
-If you want to spin up your own service feel free to reach out for some help with yggdrasil specfic questions or troubleshooting. 
+Yggdrasil transforms Discord servers into fully automated Dominions 6 hosting platforms by:
+
+- **Automated Game Hosting**: Creates and manages Dominions 6 server instances with configurable settings (maps, mods, eras, game rules)
+- **Intelligent Turn Management**: Monitors turn progression, manages chess clocks, and automatically processes turns when timers expire
+- **Comprehensive Backup System**: Automatically backs up game states before and after turn processing to prevent data loss  
+- **Smart Notifications**: Sends Discord alerts for turn starts, missing turns, timer warnings, and game status changes
+- **Player Management**: Tracks nation claims, player extensions, role assignments, and permission management
+- **File Management**: Handles pretender uploads (.2h files), mod installations, map management, and file security
+- **Game State Monitoring**: Real-time monitoring of game progress, player activity, and server health
+- **Automated Recovery**: Handles server crashes, connection issues, and provides rollback capabilities
+
+## **How It Works**
+
+Yggdrasil operates through several interconnected components working together:
+
+### **Core Architecture**
+- **Discord Bot (Ratatorskr)**: Provides slash commands and user interaction interface
+- **Game Server Manager (Nidhogg)**: Launches and controls Dominions 6 server processes using screen sessions
+- **File System Manager (Bifrost)**: Handles all file operations, uploads, backups, and security
+- **Database Manager (Vedrfolnir)**: SQLite-based storage for games, players, timers, and state tracking
+- **Timer System (Norns)**: Continuous monitoring and countdown management with automatic actions
+- **API Server (Gjallarhorn)**: FastAPI endpoints for game automation hooks and external integrations
+
+### **Automated Game Lifecycle**
+1. **Game Creation**: Players use Discord commands to create games with customizable settings
+2. **Lobby Management**: Automatic Discord channel and role creation for each game
+3. **Pretender Collection**: Players upload nation files directly through Discord
+4. **Server Launch**: Dominions 6 server automatically starts with proper configuration
+5. **Turn Processing**: System monitors for turn completion and processes automatically
+6. **Backup & Recovery**: Game states are backed up before each turn with rollback capability
+7. **Notifications**: Discord alerts keep players informed of game progress and deadlines
+
+This was born from both a technical challenge ("can I automate this complex workflow?") and a practical need to solve the pain points of hosting Dominions 6 games on Discord servers. Built from the ground up to be community-deployable, allowing anyone to spin up their own automated hosting service.
+
+**Note**: While functional and actively used, this system is still evolving. Deploy at your own discretion and feel free to reach out for help with setup or troubleshooting. 
 
 ---
 
@@ -44,12 +78,8 @@ Install the following dependencies to ensure the application works as intended.
 Set up a virtual environment and install the required libraries:
 ```bash
 python3 -m venv ygg-venv
-. ygg-venv/bin/activate
-pip install -U discord.py
-pip install aiosqlite
-pip install watchdog
-pip install fastapi
-pip install uvicorn
+source ygg-venv/bin/activate
+pip install -r requirements.txt
 ```
 
 #### **System Packages**
@@ -93,24 +123,94 @@ These are mostly just to run the dom binary.
    python yggdrasil.py
    ```
 
+### **Running as a System Service (Optional)**
+
+For production deployments, you can run Yggdrasil as a systemd service to ensure it starts automatically and restarts on failure.
+
+1. **Configure the service template**:
+   ```bash
+   cp yggdrasil.service.template yggdrasil.service
+   ```
+   
+2. **Edit the service file** and replace the placeholders:
+   - `YOUR_USERNAME` → your actual username
+   - `/path/to/yggdrasil` → your actual Yggdrasil installation path
+   
+3. **Install and enable the service**:
+   ```bash
+   sudo cp yggdrasil.service /etc/systemd/system/
+   sudo systemctl daemon-reload
+   sudo systemctl enable yggdrasil.service
+   sudo systemctl start yggdrasil.service
+   ```
+
+4. **Check service status**:
+   ```bash
+   sudo systemctl status yggdrasil.service
+   ```
+
+**Service Management Commands**:
+- Start: `sudo systemctl start yggdrasil.service`
+- Stop: `sudo systemctl stop yggdrasil.service`  
+- Restart: `sudo systemctl restart yggdrasil.service`
+- View logs: `journalctl -u yggdrasil.service -f`
+
 ---
 
-### **Core Commands**
-#### **Game Management**
-- `/new-game`: Create a new game with detailed settings.
-- `/edit-game`: Edit an existing game's properties.
-- `/start-game`: Start a game after all pretenders are submitted.
-- `/end-game`: Mark a game as finished but keep the lobby active.
-- `/delete-lobby`: Delete a game’s lobby and associated role.
-- `/end-game-and-lobby`: End the game and delete the lobby.
+### **Discord Slash Commands**
 
-#### **Timer Management**
-- `/pause-timer`: Pause a running game timer.
-- `/extend-timer`: Extend or reduce the remaining time.
-- `/set-timer-default`: Change the default timer value.
+Commands are organized by function and include permission restrictions to ensure proper game management.
 
-#### **Game Status**
-- `/undone`: View the current turn status, including which nations have played or are still pending.
+**Permission Levels:**
+- **Main Bot Channel**: Commands restricted to designated primary bot channels
+- **Game Channels**: Commands that work only in individual game lobby channels  
+- **Host/Admin**: Requires Game Host or Game Admin Discord role
+- **Owner/Admin**: Requires being the game creator or having Game Admin role
+- **Admin Only**: Requires Game Admin Discord role
+
+#### **Game Creation & Setup**
+- `/new-game` - Create a new game with detailed settings *[Main Bot Channel, Host/Admin]*
+- `/edit-game` - Edit game properties (map, mods, settings) *[Game Channel, Owner/Admin]*
+- `/select-map` - Choose from available maps *[Game Channel, Owner/Admin]*
+- `/select-mods` - Choose from available mods *[Game Channel, Owner/Admin]*
+- `/upload-map` - Upload custom map files *[Main Bot Channel, Host/Admin]*
+- `/upload-mod` - Upload custom mod files *[Main Bot Channel, Host/Admin]*
+
+#### **Game Control & Hosting**
+- `/launch` - Launch the game server process *[Game Channel, Owner/Admin]*
+- `/start-game` - Begin the game after all pretenders claimed *[Game Channel, Owner/Admin]*
+- `/force-host` - Force game to process turn immediately *[Game Channel, Owner/Admin]*
+- `/restart-game-to-lobby` - Reset game back to lobby state *[Game Channel, Owner/Admin]*
+- `/kill` - Stop game server process *[Game Channel, Owner/Admin]*
+- `/end-game` - Mark game as finished *[Game Channel, Owner/Admin]*
+
+#### **Player & Nation Management**
+- `/claim` - Claim/unclaim nations via dropdown menu *[Game Channel]*
+- `/unclaim` - Admin removal of nation claims *[Game Channel, Owner/Admin]*
+- `/leave-game` - Set your claim to an inactive state, not the same as unclaiming *[Game Channel]*
+- `/clear-claims` - Remove all nation claims in game *[Game Channel, Owner/Admin]*
+- `/pretenders` - View all submitted pretender files *[Game Channel]*
+- `/remove` - Remove pretender files from lobby *[Game Channel, Owner/Admin]*
+
+#### **Timer & Turn Management**
+- `/timer` - Check remaining time on current turn *[Game Channel]*
+- `/pause` - Pause/unpause game timer *[Game Channel, Owner/Admin]*
+- `/extend-timer` - Add/remove time from current turn *[Game Channel, Conditionally Owner/Admin]*
+- `/set-default-timer` - Change default turn timer *[Game Channel, Owner/Admin]*
+- `/roll-back` - Restore game to previous turn backup *[Game Channel, Owner/Admin]*
+- `/extensions-stats` - View player extension usage *[Game Channel]*
+- `/chess-clock-setup` - Configure individual player time banks *[Game Channel, Owner/Admin]*
+- `/player-extension-rules` - Set per-player extension limits *[Game Channel, Owner/Admin]*
+
+#### **Game Information & Status**
+- `/game-info` - Display detailed game settings and status *[Game Channel]*
+- `/undone` - Show which players haven't taken their turn *[Game Channel]*
+- `/list-active-games` - View all running games *[Main Bot Channel]*
+- `/get-version` - Show Dominions server version *[Main Bot Channel]*
+
+#### **Administrative Commands**
+- `/delete-lobby` - Permanently delete game lobby and role *[Game Channel, Owner/Admin]*
+- `/reset-game-started` - Reset game started flag *[Game Channel, Admin Only]*
 
 ---
 

@@ -1,0 +1,19 @@
+[Unit]
+Description=Yggdrasil Bot and API Service
+After=network.target
+
+[Service]
+Type=simple
+User=YOUR_USERNAME
+Group=YOUR_USERNAME
+WorkingDirectory=/path/to/yggdrasil
+ExecStart=/usr/bin/screen -DmS ygg /path/to/yggdrasil/venv/bin/python /path/to/yggdrasil/yggdrasil.py
+Restart=on-failure
+PrivateTmp=false
+ProtectSystem=false
+ProtectHome=false
+ReadWritePaths=/tmp
+KillMode=control-group
+
+[Install]
+WantedBy=multi-user.target

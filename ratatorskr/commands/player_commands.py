@@ -5,7 +5,8 @@ Player-related commands - claiming nations, managing pretenders, etc.
 import discord
 from discord import app_commands
 from datetime import datetime, timezone, timedelta
-from typing import List
+from typing import List, Dict, Optional
+import asyncio
 from bifrost import bifrost
 from ..decorators import require_bot_channel, require_game_channel, require_game_owner_or_admin, require_game_admin
 
@@ -13,130 +14,340 @@ from ..decorators import require_bot_channel, require_game_channel, require_game
 def register_player_commands(bot):
     """Register all player-related commands to the bot's command tree."""
     
+    async def create_nations_dropdown(
+            interaction: discord.Interaction,
+            nations: List[str],
+            preselected_nations: List[str] = None) -> List[str]:
+        """Creates a paginated dropdown menu for nation selection and returns the selected nations."""
+        
+        if bot.config and bot.config.get("debug", False):
+            print(f"[DEBUG] create_nations_dropdown called with {len(nations)} nations, {len(preselected_nations or [])} preselected")
+        
+        if not nations:
+            await interaction.response.send_message("No nations available.", ephemeral=True)
+            return []
+        
+        ITEMS_PER_PAGE = 25
+        total_pages = (len(nations) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+        preselected_set = set(preselected_nations or [])
+        
+        if bot.config and bot.config.get("debug", False):
+            print(f"[DEBUG] create_nations_dropdown: {total_pages} pages, {len(preselected_set)} preselected nations")
+        
+        class NationDropdown(discord.ui.Select):
+            def __init__(self, page_nations: List[str], page_num: int, total_pages: int):
+                max_selectable = min(len(page_nations), ITEMS_PER_PAGE)
+                super().__init__(
+                    placeholder=f"Choose nations (Page {page_num + 1}/{total_pages})...",
+                    min_values=0,
+                    max_values=max_selectable,
+                    options=[
+                        discord.SelectOption(
+                            label=nation,
+                            value=nation,
+                            default=nation in preselected_set
+                        )
+                        for nation in page_nations
+                    ],
+                )
+            
+            async def callback(self, interaction: discord.Interaction):
+                if not interaction.response.is_done():
+                    await interaction.response.defer()
+                
+                # Update selections for this page
+                for option in self.options:
+                    if option.value in self.values and option.value not in self.view.selected_nations:
+                        self.view.selected_nations.append(option.value)
+                    elif option.value not in self.values and option.value in self.view.selected_nations:
+                        self.view.selected_nations.remove(option.value)
+        
+        class PaginatedNationView(discord.ui.View):
+            def __init__(self):
+                super().__init__()
+                self.current_page = 0
+                self.selected_nations = list(preselected_set)
+                self.is_stopped = asyncio.Event()
+                self.confirmed = False
+                self.update_view()
+            
+            def update_view(self):
+                self.clear_items()
+                
+                start_idx = self.current_page * ITEMS_PER_PAGE
+                end_idx = min(start_idx + ITEMS_PER_PAGE, len(nations))
+                page_nations = nations[start_idx:end_idx]
+                
+                # Add dropdown
+                dropdown = NationDropdown(page_nations, self.current_page, total_pages)
+                self.add_item(dropdown)
+                
+                # Add navigation buttons
+                if total_pages > 1:
+                    if self.current_page > 0:
+                        prev_button = discord.ui.Button(label="← Previous", style=discord.ButtonStyle.secondary)
+                        prev_button.callback = self.prev_page
+                        self.add_item(prev_button)
+                    
+                    if self.current_page < total_pages - 1:
+                        next_button = discord.ui.Button(label="Next →", style=discord.ButtonStyle.secondary)
+                        next_button.callback = self.next_page
+                        self.add_item(next_button)
+                
+                # Add confirm button
+                confirm_button = discord.ui.Button(label="Confirm Selection", style=discord.ButtonStyle.green)
+                confirm_button.callback = self.confirm_selection
+                self.add_item(confirm_button)
+            
+            async def prev_page(self, interaction: discord.Interaction):
+                if self.current_page > 0:
+                    self.current_page -= 1
+                    self.update_view()
+                    await interaction.response.edit_message(
+                        content=f"Select nations (Page {self.current_page + 1}/{total_pages}). Currently selected: {len(self.selected_nations)} nations.",
+                        view=self
+                    )
+            
+            async def next_page(self, interaction: discord.Interaction):
+                if self.current_page < total_pages - 1:
+                    self.current_page += 1
+                    self.update_view()
+                    await interaction.response.edit_message(
+                        content=f"Select nations (Page {self.current_page + 1}/{total_pages}). Currently selected: {len(self.selected_nations)} nations.",
+                        view=self
+                    )
+            
+            async def confirm_selection(self, interaction: discord.Interaction):
+                self.confirmed = True
+                await interaction.response.defer()
+                self.stop()
+            
+            def stop(self):
+                super().stop()
+                self.is_stopped.set()
+            
+            async def wait(self, timeout=None):
+                try:
+                    await asyncio.wait_for(self.is_stopped.wait(), timeout=timeout)
+                except asyncio.TimeoutError:
+                    self.stop()
+                    raise
+        
+        view = PaginatedNationView()
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
+        
+        try:
+            await interaction.followup.send(
+                f"Select nations (Page 1/{total_pages}). Currently selected: {len(preselected_set)} nations.",
+                view=view,
+                ephemeral=True
+            )
+            await view.wait(timeout=300)
+            
+            if view.confirmed:
+                return view.selected_nations
+            else:
+                return []
+                
+        except asyncio.TimeoutError:
+            await interaction.followup.send("You did not make a selection in time.", ephemeral=True)
+            return []
+    
     @bot.tree.command(
         name="claim",
-        description="Claims a nation in the game.",
+        description="Claims/unclaims nations using a dropdown menu. Self-unclaiming only allowed before game starts.",
         guild=discord.Object(id=bot.guild_id)
     )
     @require_game_channel(bot.config)
-    async def claim_command(interaction: discord.Interaction, nation_name: str):
-        """Allows a user to claim a nation in the game."""
-        await interaction.response.defer()
-
+    async def claim_command(interaction: discord.Interaction):
+        """
+        Allows a user to claim/unclaim nations using a dropdown menu.
+        
+        Players can claim multiple nations and unclaim themselves only if the game hasn't started yet.
+        Once the game has started, only admins can unclaim players via the separate unclaim command.
+        """
+        if bot.config and bot.config.get("debug", False):
+            print(f"[DEBUG] claim_command started for user {interaction.user.name} in channel {interaction.channel_id}")
+        
         game_id = await bot.db_instance.get_game_id_by_channel(interaction.channel_id)
+        if bot.config and bot.config.get("debug", False):
+            print(f"[DEBUG] claim_command got game_id: {game_id}")
+            
         if not game_id:
-            await interaction.followup.send("No game is associated with this channel.")
+            await interaction.response.send_message("No game is associated with this channel.", ephemeral=True)
             return
 
         game_info = await bot.db_instance.get_game_info(game_id)
+        if bot.config and bot.config.get("debug", False):
+            print(f"[DEBUG] claim_command got game_info: {bool(game_info)}")
+            
         if not game_info:
-            await interaction.followup.send("Game information not found in the database.")
+            await interaction.response.send_message("Game information not found in the database.", ephemeral=True)
             return
 
         try:
+            if bot.config and bot.config.get("debug", False):
+                print(f"[DEBUG] claim_command calling bifrost.get_valid_nations_from_files for game {game_id}")
+                
             valid_nations = await bifrost.get_valid_nations_from_files(game_id, bot.config, bot.db_instance)
-
-            if nation_name not in valid_nations:
-                await interaction.followup.send(f"{nation_name} is not a valid nation for this game.")
+            if bot.config and bot.config.get("debug", False):
+                print(f"[DEBUG] claim_command got {len(valid_nations) if valid_nations else 0} valid nations")
+                
+            if not valid_nations:
+                await interaction.response.send_message("No valid nations found for this game.", ephemeral=True)
                 return
 
-            currently_owns = await bot.db_instance.check_player_nation(game_id, str(interaction.user.id), nation_name)
-            if currently_owns:
-                guild = interaction.guild
-                role_name = f"{game_info['game_name']} player"
-                role = discord.utils.get(guild.roles, name=role_name)
-
-                if not role:
-                    role = await guild.create_role(name=role_name)
-                    print(f"\nRole '{role_name}' created successfully.")
-
-                if role not in interaction.user.roles:
-                    await interaction.user.add_roles(role)
-                    print(f"Assigned role '{role_name}' to user {interaction.user.name}.")
-                    await interaction.followup.send(f"You already own {nation_name}, but the role '{role_name}' has been assigned to you.")
-                else:
-                    await interaction.followup.send(f"You already own {nation_name} and have the role '{role_name}'.")
-
-                return
-
-            previously_owned = await bot.db_instance.check_player_previously_owned(game_id, str(interaction.user.id), nation_name)
-            if previously_owned:
-                player_has_nations = await bot.db_instance.player_has_claimed_nations(game_id, str(interaction.user.id))
-                
-                await bot.db_instance.reclaim_nation(game_id, str(interaction.user.id), nation_name)
-                print(f"Player {interaction.user.name} reclaimed nation {nation_name} in game {game_id}.")
-                
-                chess_clock_time = 0
-                chess_clock_active = game_info.get("chess_clock_active", False)
-                if chess_clock_active and not player_has_nations:
-                    chess_clock_time = game_info.get("chess_clock_starting_time", 0)
-                    await bot.db_instance.update_player_chess_clock_time(game_id, str(interaction.user.id), chess_clock_time)
-
-                guild = interaction.guild
-                role_name = f"{game_info['game_name']} player"
-
-                role = discord.utils.get(guild.roles, name=role_name)
-                if not role:
-                    role = await guild.create_role(name=role_name)
-                    print(f"Role '{role_name}' created successfully.")
-
-                if role not in interaction.user.roles:
-                    await interaction.user.add_roles(role)
-                    print(f"Assigned role '{role_name}' to user {interaction.user.name}.")
-
-                message = f"✅ **Welcome back!** You have **re-claimed** {nation_name} and have been assigned the role '{role_name}'."
-                
-                if chess_clock_active and chess_clock_time > 0:
-                    if game_info.get("game_type", "").lower() == "blitz":
-                        time_display = f"{chess_clock_time / 60:.1f} minutes"
-                    else:
-                        time_display = f"{chess_clock_time / 3600:.1f} hours"
-                    message += f"\n⏱️ Your chess clock time has been reset to {time_display}."
-                elif chess_clock_active and player_has_nations:
-                    message += f"\n⏱️ Chess clock time unchanged (you already have nations claimed)."
-                
-                await interaction.followup.send(message)
-                return
-
-            player_has_nations = await bot.db_instance.player_has_claimed_nations(game_id, str(interaction.user.id))
+            if bot.config and bot.config.get("debug", False):
+                print(f"[DEBUG] claim_command getting current nations for player {interaction.user.id}")
             
-            chess_clock_time = 0
+            try:
+                import asyncio
+                # Add timeout to prevent hanging
+                player_current_nations = await asyncio.wait_for(
+                    bot.db_instance.get_claimed_nations_by_player(game_id, str(interaction.user.id)), 
+                    timeout=10.0
+                )
+                
+                if bot.config and bot.config.get("debug", False):
+                    print(f"[DEBUG] claim_command get_claimed_nations_by_player returned: {player_current_nations}")
+                
+                current_nation_names = player_current_nations if player_current_nations else []
+                
+                if bot.config and bot.config.get("debug", False):
+                    print(f"[DEBUG] claim_command player has {len(current_nation_names)} current nations: {current_nation_names}")
+            except asyncio.TimeoutError:
+                if bot.config and bot.config.get("debug", False):
+                    print(f"[DEBUG] claim_command timeout getting player nations")
+                await interaction.response.send_message("Database query timeout. Please try again.", ephemeral=True)
+                return
+            except Exception as e:
+                if bot.config and bot.config.get("debug", False):
+                    print(f"[DEBUG] claim_command error getting player nations: {e}")
+                await interaction.response.send_message("Error retrieving your current nations.", ephemeral=True)
+                return
+                
+            if bot.config and bot.config.get("debug", False):
+                print(f"[DEBUG] claim_command calling create_nations_dropdown")
+
+            selected_nations = await create_nations_dropdown(interaction, valid_nations, current_nation_names)
+            
+            if bot.config and bot.config.get("debug", False):
+                print(f"[DEBUG] claim_command dropdown returned {len(selected_nations) if selected_nations else 0} selected nations: {selected_nations}")
+            
+            if not selected_nations:
+                await interaction.followup.send("No nations selected.", ephemeral=True)
+                return
+
+            results = []
+            errors = []
+            first_time_claiming = not await bot.db_instance.player_has_claimed_nations(game_id, str(interaction.user.id))
+            
             chess_clock_active = game_info.get("chess_clock_active", False)
-            if chess_clock_active and not player_has_nations:
+            chess_clock_time = 0
+            if chess_clock_active and first_time_claiming:
                 chess_clock_time = game_info.get("chess_clock_starting_time", 0)
 
-            try:
-                await bot.db_instance.add_player(game_id, str(interaction.user.id), nation_name, chess_clock_time)
-                print(f"Added player {interaction.user.name} as {nation_name} in game {game_id}.")
-            except Exception as e:
-                await interaction.followup.send(f"Failed to add you as {nation_name} in the database: {e}")
-                return
+            game_started = game_info.get("game_started", False)
+            
+            # Check for nations to unclaim (only allowed if game hasn't started)
+            if not game_started:
+                current_nations_set = set(current_nation_names)
+                selected_nations_set = set(selected_nations)
+                nations_to_unclaim = current_nations_set - selected_nations_set
+                
+                for nation_to_unclaim in nations_to_unclaim:
+                    try:
+                        await bot.db_instance.delete_player_nation(game_id, str(interaction.user.id), nation_to_unclaim)
+                        results.append(f"❌ **Unclaimed** {nation_to_unclaim}")
+                        if bot.config and bot.config.get("debug", False):
+                            print(f"Player {interaction.user.name} unclaimed nation {nation_to_unclaim} in game {game_id}.")
+                    except Exception as e:
+                        errors.append(f"Failed to unclaim {nation_to_unclaim}: {e}")
+
+            for nation_name in selected_nations:
+                if nation_name not in valid_nations:
+                    errors.append(f"{nation_name} is not a valid nation for this game.")
+                    continue
+
+                currently_owns = await bot.db_instance.check_player_nation(game_id, str(interaction.user.id), nation_name)
+                if currently_owns:
+                    continue
+
+                previously_owned = await bot.db_instance.check_player_previously_owned(game_id, str(interaction.user.id), nation_name)
+                
+                try:
+                    if previously_owned:
+                        await bot.db_instance.reclaim_nation(game_id, str(interaction.user.id), nation_name)
+                        results.append(f"✅ **Re-claimed** {nation_name}")
+                        if bot.config and bot.config.get("debug", False):
+                            print(f"Player {interaction.user.name} reclaimed nation {nation_name} in game {game_id}.")
+                    else:
+                        await bot.db_instance.add_player(game_id, str(interaction.user.id), nation_name, chess_clock_time)
+                        results.append(f"✅ **Claimed** {nation_name}")
+                        if bot.config and bot.config.get("debug", False):
+                            print(f"Added player {interaction.user.name} as {nation_name} in game {game_id}.")
+                        
+                        chess_clock_time = 0
+                        
+                except Exception as e:
+                    errors.append(f"Failed to claim {nation_name}: {e}")
+
+            if first_time_claiming and chess_clock_active:
+                starting_time = game_info.get("chess_clock_starting_time", 0)
+                await bot.db_instance.update_player_chess_clock_time(game_id, str(interaction.user.id), starting_time)
+
+            # Check if player should have role removed (no nations remaining)
+            final_nations = await bot.db_instance.get_claimed_nations_by_player(game_id, str(interaction.user.id))
+            should_have_role = len(final_nations) > 0
 
             guild = interaction.guild
             role_name = f"{game_info['game_name']} player"
-
             role = discord.utils.get(guild.roles, name=role_name)
-            if not role:
+
+            if not role and should_have_role:
                 role = await guild.create_role(name=role_name)
-                print(f"Role '{role_name}' created successfully.")
+                if bot.config and bot.config.get("debug", False):
+                    print(f"Role '{role_name}' created successfully.")
 
-            await interaction.user.add_roles(role)
-            print(f"Assigned role '{role_name}' to user {interaction.user.name}.")
+            # Handle role assignment/removal
+            role_message = ""
+            if should_have_role and role and role not in interaction.user.roles:
+                await interaction.user.add_roles(role)
+                role_message = f"Role '{role_name}' assigned."
+                if bot.config and bot.config.get("debug", False):
+                    print(f"Assigned role '{role_name}' to user {interaction.user.name}.")
+            elif not should_have_role and role and role in interaction.user.roles:
+                await interaction.user.remove_roles(role)
+                role_message = f"Role '{role_name}' removed (no remaining nations)."
+                if bot.config and bot.config.get("debug", False):
+                    print(f"Removed role '{role_name}' from user {interaction.user.name}.")
 
-            message = f"You have successfully claimed {nation_name} and have been assigned the role '{role_name}'."
-            
-            if chess_clock_active:
-                starting_time = game_info.get("chess_clock_starting_time", 0)
-                if starting_time > 0:
-                    if game_info.get("game_type", "").lower() == "blitz":
-                        time_display = f"{starting_time / 60:.1f} minutes"
-                    else:
-                        time_display = f"{starting_time / 3600:.1f} hours"
-                    message += f"\n⏱️ You will receive {time_display} of chess clock time when the game starts."
-            
-            await interaction.followup.send(message)
+            message_parts = []
+            if results:
+                message_parts.append("\n".join(results))
+                if role_message:
+                    message_parts.append(role_message)
+                
+                if chess_clock_active and first_time_claiming:
+                    starting_time = game_info.get("chess_clock_starting_time", 0)
+                    if starting_time > 0:
+                        if game_info.get("game_type", "").lower() == "blitz":
+                            time_display = f"{starting_time / 60:.1f} minutes"
+                        else:
+                            time_display = f"{starting_time / 3600:.1f} hours"
+                        message_parts.append(f"⏱️ You will receive {time_display} of chess clock time when the game starts.")
+
+            if errors:
+                message_parts.append(f"\n**Errors:**\n" + "\n".join(errors))
+
+            if message_parts:
+                await interaction.followup.send("\n\n".join(message_parts))
+            else:
+                await interaction.followup.send("You already own all selected nations.")
+                
         except Exception as e:
-            await interaction.followup.send(f"Failed to claim the nation: {e}")
+            await interaction.followup.send(f"Failed to process nation claims: {e}", ephemeral=True)
 
     @bot.tree.command(
         name="unclaim",
@@ -177,8 +388,17 @@ def register_player_commands(bot):
             
             guild = interaction.guild
             target_member = None
+            target_user = None
+            
             if guild:
                 target_member = guild.get_member(int(target_player_id))
+            
+            # If not found as member, try to fetch as user
+            if not target_member:
+                try:
+                    target_user = await interaction.client.fetch_user(int(target_player_id))
+                except:
+                    target_user = None
             
             role_removed = False
             if target_member:
@@ -196,7 +416,13 @@ def register_player_commands(bot):
                         except discord.Forbidden:
                             pass
             
-            target_display = target_member.display_name if target_member else f"Player ID {target_player_id}"
+            # Resolve display name with fallbacks
+            if target_member:
+                target_display = target_member.display_name
+            elif target_user:
+                target_display = target_user.display_name
+            else:
+                target_display = f"Player ID {target_player_id}"
             message = f"✅ Nation '{nation_name}' has been **completely removed** from **{target_display}**."
             message += f"\n🗑️ All records (claim, extensions, chess clock time) have been deleted."
             
@@ -296,9 +522,13 @@ def register_player_commands(bot):
             
             valid_nations = await bifrost.get_valid_nations_from_files(game_id, bot.config, bot.db_instance)
 
-            embed = discord.Embed(title="Pretender Nations", color=discord.Color.blue())
-
             claimed_nations = await bot.db_instance.get_claimed_nations(game_id)
+            
+            # Build description instead of fields to avoid 25-field limit
+            description_lines = []
+            claimed_count = 0
+            unclaimed_count = 0
+            
             for nation in valid_nations:
                 claimants = claimed_nations.get(nation, [])
                 if claimants:
@@ -309,19 +539,50 @@ def register_player_commands(bot):
                             resolved_claimants.append(user.display_name)
                         else:
                             resolved_claimants.append(f"Unknown ({player_id})")
-                    embed.add_field(
-                        name=nation,
-                        value=f"Claimed by: {', '.join(resolved_claimants)}",
-                        inline=False
-                    )
+                    description_lines.append(f"**{nation}**: {', '.join(resolved_claimants)}")
+                    claimed_count += 1
                 else:
-                    embed.add_field(
-                        name=nation,
-                        value="Unclaimed",
-                        inline=False
+                    description_lines.append(f"**{nation}**: *Unclaimed*")
+                    unclaimed_count += 1
+            
+            # Split into multiple embeds if description gets too long (Discord limit ~4096 chars)
+            embeds = []
+            current_embed_lines = []
+            current_length = 0
+            
+            title = f"Pretender Nations ({claimed_count} claimed, {unclaimed_count} unclaimed)"
+            
+            for line in description_lines:
+                line_length = len(line) + 1  # +1 for newline
+                
+                # If adding this line would exceed Discord's description limit, start new embed
+                if current_length + line_length > 4000:  # Leave some buffer
+                    embed = discord.Embed(
+                        title=title if not embeds else f"{title} (continued)",
+                        description="\n".join(current_embed_lines),
+                        color=discord.Color.blue()
                     )
-
-            await interaction.followup.send(embed=embed)
+                    embeds.append(embed)
+                    current_embed_lines = [line]
+                    current_length = line_length
+                else:
+                    current_embed_lines.append(line)
+                    current_length += line_length
+            
+            # Add the last embed
+            if current_embed_lines:
+                embed = discord.Embed(
+                    title=title if not embeds else f"{title} (continued)",
+                    description="\n".join(current_embed_lines),
+                    color=discord.Color.blue()
+                )
+                embeds.append(embed)
+            
+            # Send all embeds
+            if embeds:
+                await interaction.followup.send(embeds=embeds)
+            else:
+                await interaction.followup.send("No nations found for this game.")
 
         except Exception as e:
             print(f"Error in pretenders command: {e}")
@@ -509,25 +770,6 @@ def register_player_commands(bot):
         except Exception as e:
             await interaction.followup.send(f"Error querying turn for game id:{game_id}\n{str(e)}")
 
-    @claim_command.autocomplete("nation_name")
-    async def autocomplete_nation(
-        interaction: discord.Interaction, current: str
-    ) -> List[app_commands.Choice]:
-        """Autocomplete handler for the 'nation_name' argument."""
-        try:
-            game_id = await bot.db_instance.get_game_id_by_channel(interaction.channel_id)
-            if not game_id:
-                return []
-
-            valid_nations = await bifrost.get_valid_nations_from_files(game_id, bot.config, bot.db_instance)
-
-            filtered_nations = [nation for nation in valid_nations if current.lower() in nation.lower()]
-
-            return [app_commands.Choice(name=nation, value=nation) for nation in filtered_nations[:25]]
-
-        except Exception as e:
-            print(f"Error in claim autocomplete: {e}")
-            return []
 
     @unclaim_command.autocomplete("nation_name")
     async def unclaim_autocomplete(
@@ -551,11 +793,135 @@ def register_player_commands(bot):
             print(f"Error in unclaim autocomplete: {e}")
             return []
 
+    @bot.tree.command(
+        name="remove",
+        description="[Admin/Owner] Removes pretender (.2h) files from unstarted game lobby.",
+        guild=discord.Object(id=bot.guild_id)
+    )
+    @require_game_channel(bot.config)
+    @require_game_owner_or_admin(bot.config)
+    async def remove_command(interaction: discord.Interaction, nation_name: str):
+        """Allows game owner/admin to remove pretender files from unstarted game lobbies."""
+        await interaction.response.defer()
+
+        game_id = await bot.db_instance.get_game_id_by_channel(interaction.channel_id)
+        if not game_id:
+            await interaction.followup.send("No game is associated with this channel.")
+            return
+
+        game_info = await bot.db_instance.get_game_info(game_id)
+        if not game_info:
+            await interaction.followup.send("Game information not found in the database.")
+            return
+
+        # Only allow in unstarted games
+        if game_info.get("game_started", False):
+            await interaction.followup.send("❌ Cannot remove pretender files after the game has started.")
+            return
+
+        try:
+            from pathlib import Path
+            
+            # Get the savedgames path for this game
+            dom_data_folder = bot.config.get("dom_data_folder", ".")
+            game_name = game_info.get("game_name")
+            if not game_name:
+                await interaction.followup.send("Game name not found.")
+                return
+            
+            savedgames_path = Path(dom_data_folder) / "savedgames" / game_name
+            if not savedgames_path.exists():
+                await interaction.followup.send(f"Savedgames directory not found: {savedgames_path}")
+                return
+            
+            # Find the .2h file for this nation
+            pretender_files = list(savedgames_path.glob(f"*{nation_name}*.2h"))
+            
+            if not pretender_files:
+                await interaction.followup.send(f"No pretender file found for nation '{nation_name}'.")
+                return
+            
+            # Remove all matching pretender files (in case there are multiple)
+            removed_files = []
+            for pretender_file in pretender_files:
+                try:
+                    pretender_file.unlink()
+                    removed_files.append(pretender_file.name)
+                    if bot.config and bot.config.get("debug", False):
+                        print(f"Removed pretender file: {pretender_file}")
+                except Exception as e:
+                    await interaction.followup.send(f"Failed to remove {pretender_file.name}: {e}")
+                    return
+            
+            if removed_files:
+                files_list = "\n".join(f"• {filename}" for filename in removed_files)
+                await interaction.followup.send(
+                    f"✅ Successfully removed pretender file(s) for '{nation_name}':\n{files_list}"
+                )
+            else:
+                await interaction.followup.send(f"No files were removed for '{nation_name}'.")
+                
+        except Exception as e:
+            await interaction.followup.send(f"Error removing pretender files: {e}")
+
+    @remove_command.autocomplete("nation_name")
+    async def remove_autocomplete(
+        interaction: discord.Interaction, current: str
+    ) -> List[app_commands.Choice]:
+        """Autocomplete handler for the remove command 'nation_name' argument."""
+        try:
+            game_id = await bot.db_instance.get_game_id_by_channel(interaction.channel_id)
+            if not game_id:
+                return []
+
+            game_info = await bot.db_instance.get_game_info(game_id)
+            if not game_info or game_info.get("game_started", False):
+                return []  # Don't show options if game has started
+            
+            from pathlib import Path
+            
+            # Get the savedgames path for this game
+            dom_data_folder = bot.config.get("dom_data_folder", ".")
+            game_name = game_info.get("game_name")
+            if not game_name:
+                return []
+            
+            savedgames_path = Path(dom_data_folder) / "savedgames" / game_name
+            if not savedgames_path.exists():
+                return []
+            
+            # Find all .2h files and extract nation names
+            pretender_files = list(savedgames_path.glob("*.2h"))
+            nations_with_files = []
+            
+            for pretender_file in pretender_files:
+                # Extract nation name from filename (format is usually something like "Player_NationName.2h")
+                filename = pretender_file.stem  # Remove .2h extension
+                # Try to extract nation name - this might need adjustment based on your file naming convention
+                if "_" in filename:
+                    nation_name = filename.split("_", 1)[1]  # Take everything after first underscore
+                else:
+                    nation_name = filename  # Use whole filename if no underscore
+                
+                if nation_name not in nations_with_files:
+                    nations_with_files.append(nation_name)
+            
+            # Filter based on what user is typing
+            filtered_nations = [nation for nation in nations_with_files if current.lower() in nation.lower()]
+            
+            return [app_commands.Choice(name=nation, value=nation) for nation in filtered_nations[:25]]
+
+        except Exception as e:
+            if bot.config and bot.config.get("debug", False):
+                print(f"Error in remove autocomplete: {e}")
+            return []
+
     return [
         claim_command,
         unclaim_command,
         leave_game_command,
         pretenders_command,
         clear_claims_command,
-        undone_command
+        undone_command,
+        remove_command
     ]

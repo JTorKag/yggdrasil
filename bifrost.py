@@ -775,10 +775,7 @@ class bifrost:
             paths = list(self._pending)
             self._pending.clear()
             self._flush_handle = None
-            asyncio.ensure_future(self._chmod_paths(paths), loop=self._loop)
 
-        async def _chmod_paths(self, paths: list[str]):
-            print(f"[bifrost] Skipped chmod for {len(paths)} watched files")
 
     @staticmethod
     def watch_folder(folder_path: str,
