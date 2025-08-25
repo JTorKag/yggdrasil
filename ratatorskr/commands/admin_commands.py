@@ -92,13 +92,44 @@ def register_admin_commands(bot):
 
     @bot.tree.command(
         name="reset-game-started",
-        description="Resets the game started flag (admin only).",
+        description="Resets the game_started flag to allow retrying /start-game after failures (ADMIN ONLY).",
         guild=discord.Object(id=bot.guild_id)
     )
     @require_game_channel(bot.config)
     @require_game_admin(bot.config)
-    async def reset_game_started_command(interaction: discord.Interaction):
-        await interaction.response.send_message("Reset game started command - implementation needed", ephemeral=True)
+    async def reset_game_started_command(interaction: discord.Interaction, confirm_game_name: str):
+        await interaction.response.defer()
+        
+        game_id = await bot.db_instance.get_game_id_by_channel(interaction.channel_id)
+        if not game_id:
+            await interaction.followup.send("No game lobby is associated with this channel.")
+            return
+            
+        game_info = await bot.db_instance.get_game_info(game_id)
+        if not game_info:
+            await interaction.followup.send("Game information not found.")
+            return
+            
+        if confirm_game_name != game_info["game_name"]:
+            await interaction.followup.send(
+                f"The confirmation name '{confirm_game_name}' does not match the actual game name '{game_info['game_name']}'."
+            )
+            return
+            
+        if not game_info["game_started"]:
+            await interaction.followup.send(f"Game '{game_info['game_name']}' is not marked as started - no reset needed.")
+            return
+            
+        try:
+            await bot.db_instance.set_game_started_value(game_id, False)
+            await interaction.followup.send(
+                f"✅ Game '{game_info['game_name']}' has been reset. The game_started flag is now False.\n"
+                f"You can now retry `/start-game` to attempt starting the game again."
+            )
+            if bot.config and bot.config.get("debug", False):
+                print(f"[ADMIN] Game ID {game_id} ({game_info['game_name']}) game_started flag reset by {interaction.user}")
+        except Exception as e:
+            await interaction.followup.send(f"Failed to reset game_started flag: {e}")
 
     return [
         delete_lobby_command,

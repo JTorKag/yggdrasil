@@ -227,7 +227,14 @@ def register_info_commands(bot):
     )
     @require_bot_channel(bot.config)
     async def get_version_command(interaction: discord.Interaction):
-        await interaction.response.send_message("Get version command - implementation needed", ephemeral=True)
+        try:
+            await interaction.response.defer(ephemeral=True)
+            
+            version_info = bot.nidhogg.get_version()
+            
+            await interaction.followup.send(f"Dominions Server Version: `{version_info}`", ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(f"Error fetching version: {e}", ephemeral=True)
 
     @bot.tree.command(
         name="list-active-games",
