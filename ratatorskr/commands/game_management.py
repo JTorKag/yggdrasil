@@ -1010,9 +1010,159 @@ def register_game_management_commands(bot):
             )
             return
         
-        if game_info.get("game_started", False):
-            await interaction.followup.send("❌ Cannot enable chess clock mode after the game has started.")
-            return
+        chess_clock_active = game_info.get("chess_clock_active", False)
+        game_started = game_info.get("game_started", False)
+        
+        # Handle lobby games (not started) - use original simple logic
+        if not game_started:
+            if starting_time == 0 and per_turn_bonus == 0:
+                try:
+                    await bot.db_instance.update_game_property(game_id, "chess_clock_active", False)
+                    await bot.db_instance.update_game_property(game_id, "chess_clock_starting_time", 0)
+                    await bot.db_instance.update_game_property(game_id, "chess_clock_per_turn_time", 0)
+                    
+                    game_name = game_info.get("game_name", f"Game ID {game_id}")
+                    await interaction.followup.send(
+                        f"✅ **Chess clock disabled** for **{game_name}**\n"
+                        f"Timer extensions now follow the existing player extension rules."
+                    )
+                    return
+                except Exception as e:
+                    await interaction.followup.send(f"Failed to disable chess clock: {e}")
+                    return
+            
+            # Original lobby logic - normal validation and setup
+            if starting_time <= 0 or per_turn_bonus < 0:
+                await interaction.followup.send("❌ Starting time must be positive and per-turn bonus cannot be negative.")
+                return
+            
+            try:
+                game_type = game_info.get("game_type", "").lower()
+                if game_type == "blitz":
+                    starting_seconds = round(starting_time * 60)
+                    per_turn_seconds = round(per_turn_bonus * 60)
+                    time_unit = "minutes"
+                else:
+                    starting_seconds = round(starting_time * 3600)
+                    per_turn_seconds = round(per_turn_bonus * 3600)
+                    time_unit = "hours"
+                
+                await bot.db_instance.update_game_property(game_id, "chess_clock_active", True)
+                await bot.db_instance.update_game_property(game_id, "chess_clock_starting_time", starting_seconds)
+                await bot.db_instance.update_game_property(game_id, "chess_clock_per_turn_time", per_turn_seconds)
+                
+                game_name = game_info.get("game_name", f"Game ID {game_id}")
+                
+                await interaction.followup.send(
+                    f"✅ Chess clock mode enabled for **{game_name}**:\n"
+                    f"• Starting time: {starting_time:g} {time_unit}\n"
+                    f"• Per-turn bonus: {per_turn_bonus:g} {time_unit}\n\n"
+                    f"Players will receive their starting time when the game starts."
+                )
+                return
+                
+            except Exception as e:
+                await interaction.followup.send(f"Failed to set up chess clock: {e}")
+                return
+        
+        # For started games, check admin permissions when enabling chess clock
+        if game_started and not chess_clock_active:
+            admin_role_id = int(bot.config.get("game_admin"))
+            admin_role = discord.utils.get(interaction.guild.roles, id=admin_role_id)
+            is_admin = admin_role and admin_role in interaction.user.roles
+            
+            if not is_admin:
+                await interaction.followup.send("❌ Cannot enable chess clock mode after the game has started. (Admin-only capability)")
+                return
+        
+        # Handle started games with special logic
+        if game_started:
+            # Check if this is disabling chess clock (both values are 0)
+            if starting_time == 0 and per_turn_bonus == 0:
+                try:
+                    await bot.db_instance.update_game_property(game_id, "chess_clock_active", False)
+                    await bot.db_instance.update_game_property(game_id, "chess_clock_starting_time", 0)
+                    await bot.db_instance.update_game_property(game_id, "chess_clock_per_turn_time", 0)
+                    
+                    game_name = game_info.get("game_name", f"Game ID {game_id}")
+                    await interaction.followup.send(
+                        f"✅ **Chess clock disabled** for **{game_name}**\n"
+                        f"Timer extensions now follow the existing player extension rules."
+                    )
+                    return
+                except Exception as e:
+                    await interaction.followup.send(f"Failed to disable chess clock: {e}")
+                    return
+            
+            try:
+                game_type = game_info.get("game_type", "").lower()
+                if game_type == "blitz":
+                    per_turn_seconds = round(per_turn_bonus * 60)
+                    time_unit = "minutes"
+                else:
+                    per_turn_seconds = round(per_turn_bonus * 3600)
+                    time_unit = "hours"
+                
+                game_name = game_info.get("game_name", f"Game ID {game_id}")
+                
+                if chess_clock_active:
+                    # Chess clock is already running - only update per-turn bonus, ignore starting_time
+                    await bot.db_instance.update_game_property(game_id, "chess_clock_per_turn_time", per_turn_seconds)
+                    
+                    await interaction.followup.send(
+                        f"✅ Chess clock per-turn bonus updated for **{game_name}**:\n"
+                        f"• New per-turn bonus: {per_turn_bonus:g} {time_unit}\n\n"
+                        f"Player time banks unchanged. Starting time value ignored."
+                    )
+                else:
+                    # Chess clock is not setup - enable it with proper time allocation (admin-only)
+                    if game_type == "blitz":
+                        starting_seconds = round(starting_time * 60) if starting_time > 0 else 0
+                    else:
+                        starting_seconds = round(starting_time * 3600) if starting_time > 0 else 0
+                    
+                    await bot.db_instance.update_game_property(game_id, "chess_clock_active", True)
+                    await bot.db_instance.update_game_property(game_id, "chess_clock_starting_time", starting_seconds)
+                    await bot.db_instance.update_game_property(game_id, "chess_clock_per_turn_time", per_turn_seconds)
+                    
+                    # Handle player time allocation
+                    players = await bot.db_instance.get_players_in_game(game_id)
+                    
+                    if starting_time > 0:
+                        # Set all players to starting_time value
+                        for player_data in players:
+                            if player_data.get('currently_claimed', False):
+                                await bot.db_instance.update_player_chess_clock_time(
+                                    game_id, 
+                                    player_data['player_id'], 
+                                    starting_seconds
+                                )
+                        allocation_msg = f"All players set to {starting_time:g} {time_unit}"
+                    else:
+                        # starting_time is 0 - preserve existing times or set to 0 if none
+                        for player_data in players:
+                            if player_data.get('currently_claimed', False):
+                                current_time = player_data.get('chess_clock_time_remaining')
+                                if current_time is None:  # Only set to 0 if no previous record exists
+                                    await bot.db_instance.update_player_chess_clock_time(
+                                        game_id, 
+                                        player_data['player_id'], 
+                                        0
+                                    )
+                                # If current_time exists (even if it's 0), preserve it
+                        allocation_msg = "Existing time banks preserved"
+                    
+                    await interaction.followup.send(
+                        f"✅ Chess clock enabled for **{game_name}**:\n"
+                        f"• Per-turn bonus: {per_turn_bonus:g} {time_unit}\n"
+                        f"• {allocation_msg}\n\n"
+                        f"Chess clock is now active for this game."
+                    )
+                return
+                
+            except Exception as e:
+                await interaction.followup.send(f"Failed to update chess clock: {e}")
+                return
         
         if starting_time <= 0 or per_turn_bonus < 0:
             await interaction.followup.send("❌ Starting time must be positive and per-turn bonus cannot be negative.")
