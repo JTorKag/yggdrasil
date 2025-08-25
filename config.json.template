@@ -6,9 +6,12 @@
     "dominions_folder":"",
     "dom_data_folder":"",
     "backup_data_folder":"",
-    "game_host":"",
+    "game_host":"", 
     "game_admin":"",
     "server_host":"",
-    "max_active_games": 8,
-    "dev_eviron":""
+    "max_active_games":8,
+    "install_location":"",
+    "dev_eviron":"",
+    "debug": true
 }
+

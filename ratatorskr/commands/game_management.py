@@ -822,18 +822,18 @@ def register_game_management_commands(bot):
     @require_game_owner_or_admin(bot.config)
     async def chess_clock_setup_command(interaction: discord.Interaction, starting_time: float, per_turn_bonus: float):
         """Set up chess clock mode for the current game."""
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer()
         
         # Get the game ID associated with the channel
         game_id = await bot.db_instance.get_game_id_by_channel(interaction.channel_id)
         if not game_id:
-            await interaction.followup.send("No game is associated with this channel.", ephemeral=True)
+            await interaction.followup.send("No game is associated with this channel.")
             return
         
         # Get current game info
         game_info = await bot.db_instance.get_game_info(game_id)
         if not game_info:
-            await interaction.followup.send("Game information not found.", ephemeral=True)
+            await interaction.followup.send("Game information not found.")
             return
         
         # Check if this is a disable request (both values are 0)
@@ -847,12 +847,11 @@ def register_game_management_commands(bot):
                 game_name = game_info.get("game_name", f"Game ID {game_id}")
                 await interaction.followup.send(
                     f"✅ **Chess clock disabled** for **{game_name}**\n"
-                    f"Timer extensions now follow the existing player extension rules.", 
-                    ephemeral=True
+                    f"Timer extensions now follow the existing player extension rules."
                 )
                 return
             except Exception as e:
-                await interaction.followup.send(f"Failed to disable chess clock: {e}", ephemeral=True)
+                await interaction.followup.send(f"Failed to disable chess clock: {e}")
                 return
         
         # Check if player_control_timers is enabled (only for enabling chess clock)
@@ -860,19 +859,18 @@ def register_game_management_commands(bot):
         if not player_control_timers:
             await interaction.followup.send(
                 "❌ Chess clock mode requires 'player control timers' to be enabled.\n"
-                "Use `/player-extension-rules allow_players:True` first.", 
-                ephemeral=True
+                "Use `/player-extension-rules allow_players:True` first."
             )
             return
         
         # Check if game has already started
         if game_info.get("game_started", False):
-            await interaction.followup.send("❌ Cannot enable chess clock mode after the game has started.", ephemeral=True)
+            await interaction.followup.send("❌ Cannot enable chess clock mode after the game has started.")
             return
         
         # Validate values for enabling chess clock
         if starting_time <= 0 or per_turn_bonus < 0:
-            await interaction.followup.send("❌ Starting time must be positive and per-turn bonus cannot be negative.", ephemeral=True)
+            await interaction.followup.send("❌ Starting time must be positive and per-turn bonus cannot be negative.")
             return
         
         try:
@@ -898,12 +896,11 @@ def register_game_management_commands(bot):
                 f"✅ Chess clock mode enabled for **{game_name}**:\n"
                 f"• Starting time: {starting_time:g} {time_unit}\n"
                 f"• Per-turn bonus: {per_turn_bonus:g} {time_unit}\n\n"
-                f"Players will receive their starting time when they claim nations.", 
-                ephemeral=True
+                f"Players will receive their starting time when they claim nations."
             )
             
         except Exception as e:
-            await interaction.followup.send(f"Failed to set up chess clock: {e}", ephemeral=True)
+            await interaction.followup.send(f"Failed to set up chess clock: {e}")
 
     # Add autocomplete functions for the commands that need them
     # These will need to be implemented based on the original logic
