@@ -6,12 +6,19 @@ import asyncio
 import discord
 from discord import app_commands
 from bifrost import bifrost
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from ..decorators import require_bot_channel, require_primary_bot_channel, require_game_channel, require_game_host_or_admin, require_game_owner_or_admin, require_game_admin
 
 
 def register_game_management_commands(bot):
     """Register all game management commands to the bot's command tree."""
+    if bot.config and bot.config.get("debug", False):
+        print("[GAME_MGMT] Starting command registration...")
     
+    if bot.config and bot.config.get("debug", False):
+        print("[GAME_MGMT] Registering new-game command...")
     @bot.tree.command(
         name="new-game",
         description="Creates a brand new game",
@@ -36,7 +43,7 @@ def register_game_management_commands(bot):
         lv2_thrones: int,
         lv3_thrones: int,
         points_to_win: int,
-        player_control_timers: bool
+        player_control_timers: str
     ):
         try:
             # Defer interaction to prevent timeout
@@ -54,6 +61,7 @@ def register_game_management_commands(bot):
             disicples_map = {"False": 0, "True": 1}
             story_events_map = {"None": 0, "Some": 1, "Full": 2}
             no_going_ai_map = {"True": 0, "False": 1}
+            player_control_timers_map = {"True": 1, "False": 0}
 
             game_era_value = era_map[game_era]
             research_random_value = research_random_map[research_random]
@@ -61,6 +69,7 @@ def register_game_management_commands(bot):
             disicples_value = disicples_map[disicples]
             story_events_value = story_events_map[story_events]
             no_going_ai_value = no_going_ai_map[no_going_ai]
+            player_control_timers_value = player_control_timers_map[player_control_timers]
 
             thrones_value = ",".join(map(str, [lv1_thrones, lv2_thrones, lv3_thrones]))
 
@@ -125,7 +134,7 @@ def register_game_management_commands(bot):
                     game_owner=interaction.user.name,
                     creation_version=bot.nidhogg.get_version(),
                     max_active_games = bot.config["max_active_games"],
-                    player_control_timers=player_control_timers
+                    player_control_timers=bool(player_control_timers_value)
                 )
 
                 # Create the timer for the new game
@@ -146,48 +155,64 @@ def register_game_management_commands(bot):
         except Exception as e:
             await interaction.followup.send(f"An error occurred: {e}", ephemeral=True)
 
+    if bot.config and bot.config.get("debug", False):
+        print("[GAME_MGMT] new-game command function defined, adding autocomplete...")
     @new_game_command.autocomplete("game_type")
     async def game_type_autocomplete(interaction: discord.Interaction, current: str):
         options = ["Casual", "Blitz"]
         matches = [option for option in options if current.lower() in option.lower()]
         return [app_commands.Choice(name=match, value=match) for match in matches]
 
+    if bot.config and bot.config.get("debug", False):
+        print("[GAME_MGMT] game_type autocomplete added")
     @new_game_command.autocomplete("game_era")
     async def game_era_autocomplete(interaction: discord.Interaction, current: str):
         options = ["Early", "Middle", "Late"]
         matches = [option for option in options if current.lower() in option.lower()]
         return [app_commands.Choice(name=match, value=match) for match in matches]
 
+    if bot.config and bot.config.get("debug", False):
+        print("[GAME_MGMT] game_era autocomplete added")
     @new_game_command.autocomplete("research_random")
     async def research_random_autocomplete(interaction: discord.Interaction, current: str):
         options = ["Even Spread", "Random"]
         matches = [option for option in options if current.lower() in option.lower()]
         return [app_commands.Choice(name=match, value=match) for match in matches]
 
+    if bot.config and bot.config.get("debug", False):
+        print("[GAME_MGMT] research_random autocomplete added")
     @new_game_command.autocomplete("event_rarity")
     async def event_rarity_autocomplete(interaction: discord.Interaction, current: str):
         options = ["Common", "Rare"]
         matches = [option for option in options if current.lower() in option.lower()]
         return [app_commands.Choice(name=match, value=match) for match in matches]
 
+    if bot.config and bot.config.get("debug", False):
+        print("[GAME_MGMT] event_rarity autocomplete added")
     @new_game_command.autocomplete("disicples")
     async def disicples_autocomplete(interaction: discord.Interaction, current: str):
         options = ["False", "True"]
         matches = [option for option in options if current.lower() in option.lower()]
         return [app_commands.Choice(name=match, value=match) for match in matches]
 
+    if bot.config and bot.config.get("debug", False):
+        print("[GAME_MGMT] disicples autocomplete added")
     @new_game_command.autocomplete("story_events")
     async def story_events_autocomplete(interaction: discord.Interaction, current: str):
         options = ["None", "Some", "Full"]
         matches = [option for option in options if current.lower() in option.lower()]
         return [app_commands.Choice(name=match, value=match) for match in matches]
 
+    if bot.config and bot.config.get("debug", False):
+        print("[GAME_MGMT] story_events autocomplete added")
     @new_game_command.autocomplete("no_going_ai")
     async def no_going_ai_autocomplete(interaction: discord.Interaction, current: str):
         options = ["False", "True"]
         matches = [option for option in options if current.lower() in option.lower()]
         return [app_commands.Choice(name=match, value=match) for match in matches]
     
+    if bot.config and bot.config.get("debug", False):
+        print("[GAME_MGMT] no_going_ai autocomplete added")
     @new_game_command.autocomplete("global_slots")
     async def global_slots_autocomplete(interaction: discord.Interaction, current: str):
         # Predefined options for global slots
@@ -201,14 +226,25 @@ def register_game_management_commands(bot):
             matches = [str(option) for option in options]
 
         # Convert matches to app_commands.Choice objects
-        return [discord.app_commands.Choice(name=match, value=int(match)) for match in matches]
+        return [app_commands.Choice(name=match, value=match) for match in matches]
 
+    if bot.config and bot.config.get("debug", False):
+        print("[GAME_MGMT] global_slots autocomplete added")
     @new_game_command.autocomplete("player_control_timers")
     async def player_control_timers_autocomplete(interaction: discord.Interaction, current: str):
-        options = ["True", "False"]
-        matches = [option for option in options if current.lower() in option.lower()]
-        return [app_commands.Choice(name=match, value=match.lower() == "true") for match in matches]
+        # Simple static choices without any filtering or complex logic
+        return [
+            app_commands.Choice(name="True", value="True"),
+            app_commands.Choice(name="False", value="False")
+        ]
 
+    if bot.config and bot.config.get("debug", False):
+        print("[GAME_MGMT] player_control_timers autocomplete added")
+    if bot.config and bot.config.get("debug", False):
+        print("[GAME_MGMT] new-game command registered successfully")
+    
+    if bot.config and bot.config.get("debug", False):
+        print("[GAME_MGMT] Registering edit-game command...")
     @bot.tree.command(
         name="edit-game", 
         description="Edits a game",
@@ -232,7 +268,7 @@ def register_game_management_commands(bot):
         lv2_thrones: int,
         lv3_thrones: int,
         points_to_win: int,
-        player_control_timers: bool
+        player_control_timers: str
     ):
         """
         Fully edits all properties of an existing game. All fields are required.
@@ -269,6 +305,12 @@ def register_game_management_commands(bot):
                 await interaction.followup.send("Invalid value for game_era. Allowed values: Early, Middle, Late.", ephemeral=True)
                 return
             game_era_value = era_map[game_era]
+            
+            player_control_timers_map = {"True": 1, "False": 0}
+            if player_control_timers not in player_control_timers_map:
+                await interaction.followup.send("Invalid value for player_control_timers. Allowed values: True, False.", ephemeral=True)
+                return
+            player_control_timers_value = player_control_timers_map[player_control_timers]
 
             research_random_map = {"Even Spread": 1, "Random": 0}
             if research_random not in research_random_map:
@@ -330,7 +372,7 @@ def register_game_management_commands(bot):
                 "masterpass": master_pass,
                 "thrones": thrones_value,
                 "requiredap": points_to_win,
-                "player_control_timers": player_control_timers
+                "player_control_timers": bool(player_control_timers_value)
             }
 
             for property_name, new_value in updates.items():
@@ -348,19 +390,19 @@ def register_game_management_commands(bot):
     async def edit_game_type_autocomplete(interaction: discord.Interaction, current: str):
         options = ["Casual", "Blitz"]
         matches = [option for option in options if current.lower() in option.lower()]
-        return [discord.app_commands.Choice(name=match, value=match) for match in matches]
+        return [app_commands.Choice(name=match, value=match) for match in matches]
 
     @edit_game_command.autocomplete("game_era")
     async def edit_game_era_autocomplete(interaction: discord.Interaction, current: str):
         options = ["Early", "Middle", "Late"]
         matches = [option for option in options if current.lower() in option.lower()]
-        return [discord.app_commands.Choice(name=match, value=match) for match in matches]
+        return [app_commands.Choice(name=match, value=match) for match in matches]
 
     @edit_game_command.autocomplete("research_random")
     async def edit_research_random_autocomplete(interaction: discord.Interaction, current: str):
         options = ["Even Spread", "Random"]
         matches = [option for option in options if current.lower() in option.lower()]
-        return [discord.app_commands.Choice(name=match, value=match) for match in matches]
+        return [app_commands.Choice(name=match, value=match) for match in matches]
 
     @edit_game_command.autocomplete("global_slots")
     async def edit_global_slots_autocomplete(interaction: discord.Interaction, current: str):
@@ -368,38 +410,43 @@ def register_game_management_commands(bot):
         matches = [str(option) for option in options if current.isdigit() and current in str(option)]
         if not matches:
             matches = [str(option) for option in options]
-        return [discord.app_commands.Choice(name=match, value=int(match)) for match in matches]
+        return [app_commands.Choice(name=match, value=int(match)) for match in matches]
 
     @edit_game_command.autocomplete("event_rarity")
     async def edit_event_rarity_autocomplete(interaction: discord.Interaction, current: str):
         options = ["Common", "Rare"]
         matches = [option for option in options if current.lower() in option.lower()]
-        return [discord.app_commands.Choice(name=match, value=match) for match in matches]
+        return [app_commands.Choice(name=match, value=match) for match in matches]
 
     @edit_game_command.autocomplete("disicples")
     async def edit_disicples_autocomplete(interaction: discord.Interaction, current: str):
         options = ["False", "True"]
         matches = [option for option in options if current.lower() in option.lower()]
-        return [discord.app_commands.Choice(name=match, value=match) for match in matches]
+        return [app_commands.Choice(name=match, value=match) for match in matches]
 
     @edit_game_command.autocomplete("story_events")
     async def edit_story_events_autocomplete(interaction: discord.Interaction, current: str):
         options = ["None", "Some", "Full"]
         matches = [option for option in options if current.lower() in option.lower()]
-        return [discord.app_commands.Choice(name=match, value=match) for match in matches]
+        return [app_commands.Choice(name=match, value=match) for match in matches]
 
     @edit_game_command.autocomplete("no_going_ai")
     async def edit_no_going_ai_autocomplete(interaction: discord.Interaction, current: str):
         options = ["False", "True"]
         matches = [option for option in options if current.lower() in option.lower()]
-        return [discord.app_commands.Choice(name=match, value=match) for match in matches]
+        return [app_commands.Choice(name=match, value=match) for match in matches]
 
     @edit_game_command.autocomplete("player_control_timers")
     async def edit_player_control_timers_autocomplete(interaction: discord.Interaction, current: str):
         options = ["True", "False"]
         matches = [option for option in options if current.lower() in option.lower()]
-        return [app_commands.Choice(name=match, value=match.lower() == "true") for match in matches]
+        return [app_commands.Choice(name=match, value=match) for match in matches]
 
+    if bot.config and bot.config.get("debug", False):
+        print("[GAME_MGMT] edit-game command registered successfully")
+    
+    if bot.config and bot.config.get("debug", False):
+        print("[GAME_MGMT] Registering launch command...")
     @bot.tree.command(
         name="launch",
         description="Launches game lobby.",
@@ -438,6 +485,11 @@ def register_game_management_commands(bot):
         else:
             await interaction.followup.send(f"Failed to launch game lobby for game {game_info['game_name']} ID: {game_id}.")
 
+    if bot.config and bot.config.get("debug", False):
+        print("[GAME_MGMT] launch command registered successfully")
+    
+    if bot.config and bot.config.get("debug", False):
+        print("[GAME_MGMT] Registering start-game command...")
     @bot.tree.command(
         name="start-game",
         description="Forces a game to generate a new turn at any time.",
@@ -522,6 +574,10 @@ def register_game_management_commands(bot):
             await interaction.followup.send(f"Failed to backup game files: {e}")
             return
 
+        # Set game_start_attempted flag to begin monitoring for turn 1 transition
+        await bot.db_instance.set_game_start_attempted(game_id, True)
+        print(f"[DEBUG] Set game_start_attempted=True for game ID {game_id}")
+
         # Use Nidhogg to force host via domcmd
         try:
             await bot.nidhogg.force_game_host(game_id, bot.config, bot.db_instance)
@@ -592,10 +648,11 @@ def register_game_management_commands(bot):
         else:
             await interaction.followup.send(f"Failed to launch game lobby for game ID: {game_id}.")
 
-        # Reset the `game_started` field in the database
+        # Reset both game_started and game_start_attempted fields in the database
         try:
             await bot.db_instance.set_game_started_value(game_id, False)
-            print(f"Game ID {game_id} has been reset to the lobby state.")
+            await bot.db_instance.set_game_start_attempted(game_id, False)
+            print(f"Game ID {game_id} has been reset to the lobby state (both flags set to false).")
         except Exception as e:
             await interaction.followup.send(f"Failed to reset game to lobby state in the database: {e}", ephemeral=True)
             return
@@ -605,23 +662,33 @@ def register_game_management_commands(bot):
     # Game Control Commands
     @bot.tree.command(
         name="pause",
-        description="Pauses the game timer.",
+        description="Toggles the game timer pause state.",
         guild=discord.Object(id=bot.guild_id)
     )
     @require_game_channel(bot.config)
     @require_game_owner_or_admin(bot.config)
     async def pause_command(interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer()
         game_id = await bot.db_instance.get_game_id_by_channel(interaction.channel_id)
         if not game_id:
-            await interaction.followup.send("No game is associated with this channel.", ephemeral=True)
+            await interaction.followup.send("No game is associated with this channel.")
             return
         
-        success = await bot.db_instance.set_timer_running(game_id, False)
+        # Get current timer state from gameTimers table
+        timer_info = await bot.db_instance.get_timer_info(game_id)
+        if not timer_info:
+            await interaction.followup.send("No timer found for this game.")
+            return
+            
+        current_running = timer_info.get('timer_running', False)
+        new_running = not current_running
+        
+        success = await bot.db_instance.set_timer_running(game_id, new_running)
         if success:
-            await interaction.followup.send("Game timer has been paused.", ephemeral=True)
+            state = "unpaused" if new_running else "paused"
+            await interaction.followup.send(f"Game timer has been {state}.")
         else:
-            await interaction.followup.send("Failed to pause the game timer.", ephemeral=True)
+            await interaction.followup.send("Failed to change the game timer state.")
 
     @bot.tree.command(
         name="end-game",
@@ -693,20 +760,20 @@ def register_game_management_commands(bot):
     )
     @require_game_channel(bot.config)
     @require_game_owner_or_admin(bot.config)
-    async def player_extension_rules_command(interaction: discord.Interaction, allow_players: bool):
+    async def player_extension_rules_command(interaction: discord.Interaction, allow_players: str):
         """Toggle the player_control_timers setting for the current game."""
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer()
         
         # Get the game ID associated with the channel
         game_id = await bot.db_instance.get_game_id_by_channel(interaction.channel_id)
         if not game_id:
-            await interaction.followup.send("No game is associated with this channel.", ephemeral=True)
+            await interaction.followup.send("No game is associated with this channel.")
             return
         
         # Get current game info
         game_info = await bot.db_instance.get_game_info(game_id)
         if not game_info:
-            await interaction.followup.send("Game information not found.", ephemeral=True)
+            await interaction.followup.send("Game information not found.")
             return
         
         # Check if chess clock is active
@@ -714,36 +781,41 @@ def register_game_management_commands(bot):
         if chess_clock_active and not allow_players:
             await interaction.followup.send(
                 "❌ Cannot disable player timer control while chess clock mode is active.\n"
-                "Chess clock mode requires players to be able to extend timers.", 
-                ephemeral=True
+                "Chess clock mode requires players to be able to extend timers."
             )
             return
         
         try:
-            # Update the setting
-            await bot.db_instance.update_game_property(game_id, "player_control_timers", allow_players)
+            # Convert string to boolean using mapping
+            allow_players_map = {"True": 1, "False": 0}
+            if allow_players not in allow_players_map:
+                await interaction.followup.send("Invalid value for allow_players. Allowed values: True, False.")
+                return
+            allow_players_value = bool(allow_players_map[allow_players])
             
-            status_text = "can extend timers" if allow_players else "cannot extend timers (only owner/admin)"
+            # Update the setting
+            await bot.db_instance.update_game_property(game_id, "player_control_timers", allow_players_value)
+            
+            status_text = "can extend timers" if allow_players_value else "cannot extend timers (only owner/admin)"
             game_name = game_info.get("game_name", f"Game ID {game_id}")
             
             await interaction.followup.send(
                 f"✅ Timer rules updated for **{game_name}**:\n"
-                f"Players {status_text}.", 
-                ephemeral=True
+                f"Players {status_text}."
             )
             
         except Exception as e:
-            await interaction.followup.send(f"Failed to update timer rules: {e}", ephemeral=True)
+            await interaction.followup.send(f"Failed to update timer rules: {e}")
 
     @player_extension_rules_command.autocomplete("allow_players")
     async def allow_players_autocomplete(interaction: discord.Interaction, current: str):
         options = ["True", "False"]
         matches = [option for option in options if current.lower() in option.lower()]
-        return [app_commands.Choice(name=match, value=match.lower() == "true") for match in matches]
+        return [app_commands.Choice(name=match, value=match) for match in matches]
 
     @bot.tree.command(
-        name="chess-clock-setup",
-        description="Set up chess clock mode for the game with starting time and per-turn bonus.",
+        name="chess-clock-setup", 
+        description="Set up chess clock mode (or disable by setting both values to 0).",
         guild=discord.Object(id=bot.guild_id)
     )
     @require_game_channel(bot.config)
@@ -764,7 +836,26 @@ def register_game_management_commands(bot):
             await interaction.followup.send("Game information not found.", ephemeral=True)
             return
         
-        # Check if player_control_timers is enabled
+        # Check if this is a disable request (both values are 0)
+        if starting_time == 0 and per_turn_bonus == 0:
+            try:
+                # Disable chess clock mode
+                await bot.db_instance.update_game_property(game_id, "chess_clock_active", False)
+                await bot.db_instance.update_game_property(game_id, "chess_clock_starting_time", 0)
+                await bot.db_instance.update_game_property(game_id, "chess_clock_per_turn_time", 0)
+                
+                game_name = game_info.get("game_name", f"Game ID {game_id}")
+                await interaction.followup.send(
+                    f"✅ **Chess clock disabled** for **{game_name}**\n"
+                    f"Timer extensions now follow the existing player extension rules.", 
+                    ephemeral=True
+                )
+                return
+            except Exception as e:
+                await interaction.followup.send(f"Failed to disable chess clock: {e}", ephemeral=True)
+                return
+        
+        # Check if player_control_timers is enabled (only for enabling chess clock)
         player_control_timers = game_info.get("player_control_timers", True)
         if not player_control_timers:
             await interaction.followup.send(
@@ -779,7 +870,7 @@ def register_game_management_commands(bot):
             await interaction.followup.send("❌ Cannot enable chess clock mode after the game has started.", ephemeral=True)
             return
         
-        # Validate values
+        # Validate values for enabling chess clock
         if starting_time <= 0 or per_turn_bonus < 0:
             await interaction.followup.send("❌ Starting time must be positive and per-turn bonus cannot be negative.", ephemeral=True)
             return
@@ -817,6 +908,8 @@ def register_game_management_commands(bot):
     # Add autocomplete functions for the commands that need them
     # These will need to be implemented based on the original logic
     
+    if bot.config and bot.config.get("debug", False):
+        print("[GAME_MGMT] All commands registered, returning command list...")
     return [
         new_game_command,
         edit_game_command, 

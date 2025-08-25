@@ -79,11 +79,11 @@ class APIHandler:
                 if not timer_info:
                     raise HTTPException(status_code=404, detail="Game timer information not found.")
 
-                # Reset the timer to the default time
+                # Reset the timer to the default time and add chess clock per-turn bonuses
                 try:
                     timer_default = timer_info["timer_default"]  # Fetch timer_default before resetting
-                    await self.discord_bot.db_instance.update_timer(game_id, timer_default, True)
-                    print(f"[DEBUG] Timer for game ID {game_id} reset to default: {timer_default} seconds.")
+                    await self.discord_bot.db_instance.reset_timer_for_new_turn(game_id, self.config)
+                    print(f"[DEBUG] Timer for game ID {game_id} reset for new turn (including chess clock bonuses).")
                 except Exception as e:
                     print(f"[ERROR] Failed to reset timer for game ID {game_id}: {e}")
                     raise HTTPException(status_code=500, detail="Failed to reset the timer.")

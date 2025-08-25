@@ -26,7 +26,14 @@ class TimerManager:
         """
         while self.running:
             try:
-                # Fetch all active timers
+                # First, check for games that need turn transition monitoring (regardless of timer status)
+                games_needing_monitoring = await self.db_instance.get_games_needing_turn_monitoring()
+                for game in games_needing_monitoring:
+                    game_id = game["game_id"]
+                    print(f"[DEBUG] Checking turn transition for game ID {game_id} (game_start_attempted=true, game_started=false)")
+                    await self.check_turn_transition(game_id)
+
+                # Fetch all active timers for timer management
                 active_timers = await self.db_instance.get_active_timers()
 
                 for timer in active_timers:
@@ -37,10 +44,6 @@ class TimerManager:
                     game_info = await self.db_instance.get_game_info(game_id)
                     if not game_info or not game_info.get("game_running", False):
                         continue  # Skip this timer if the game is not running
-
-                    # Only check for turn transitions on non-started games (lobby → turn 1 detection)
-                    if not game_info.get("game_started", False):
-                        await self.check_turn_transition(game_id)
 
                     # Check if screen session is still alive
                     await self.check_screen_session_alive(game_id, game_info)
@@ -59,7 +62,7 @@ class TimerManager:
                             await self.nidhogg.force_game_host(game_id, self.config, self.db_instance)
 
                             # Reset the timer for the new turn
-                            await self.db_instance.reset_timer_for_new_turn(game_id)
+                            await self.db_instance.reset_timer_for_new_turn(game_id, self.config)
                             print(f"[DEBUG] Timer for game ID {game_id} reset for the next turn.")
                         except Exception as e:
                             print(f"[ERROR] Failed to force host for game ID {game_id}: {e}")
@@ -172,21 +175,28 @@ class TimerManager:
             # Import bifrost here to avoid circular imports
             from bifrost import bifrost
             
+            print(f"[DEBUG] Checking turn transition for game ID {game_id}")
+            
             # Read the current turn from statusdump
             status_data = await bifrost.read_statusdump_file(game_id, self.db_instance, self.config)
             if not status_data:
+                print(f"[DEBUG] No statusdump data for game ID {game_id}, likely still in lobby")
                 return  # No statusdump file yet, likely still in lobby
             
             current_turn = status_data.get("turn", -1)
             last_known_turn = self.game_turns.get(game_id, -1)
             
-            # Detect transitions: either exact transition or missed transition
-            if (last_known_turn == -1 and current_turn == 1) or (current_turn >= 1):
-                if last_known_turn == -1 and current_turn == 1:
+            print(f"[DEBUG] Game ID {game_id}: current_turn={current_turn}, last_known_turn={last_known_turn}")
+            
+            # Detect transitions: exact transition or missed transition (for games where start was attempted)
+            if (last_known_turn == -1 and current_turn == 1) or (last_known_turn == -1 and current_turn >= 1):
+                if current_turn == 1:
                     print(f"[DEBUG] Detected lobby → turn 1 transition for game ID {game_id}")
                 else:
                     print(f"[DEBUG] Caught missed turn 1 transition for game ID {game_id} (current turn: {current_turn})")
                 await self.handle_game_start_notification(game_id)
+            else:
+                print(f"[DEBUG] No transition detected for game ID {game_id}")
             
             # Update the last known turn
             self.game_turns[game_id] = current_turn
@@ -228,9 +238,9 @@ class TimerManager:
             else:
                 remaining_time = 3600  # Default 1 hour if no timer info
 
-            # Mark game as started (this is the true game start - lobby -> turn 1)
+            # Mark game as started (keep game_start_attempted=true so both flags are true = stop monitoring)
             await self.db_instance.set_game_started_value(game_id, True)
-            print(f"[DEBUG] Game ID {game_id} marked as started (turn 1 reached)")
+            print(f"[DEBUG] Game ID {game_id} marked as started (turn 1 reached). Both flags now true = monitoring complete.")
 
             # Calculate Discord timestamp
             from datetime import datetime, timedelta, timezone
@@ -330,11 +340,23 @@ class TimerManager:
                 print(f"[ERROR] Discord channel not found for dead game ID {game_id}")
                 return
 
-            # Get the associated role for pinging
-            associated_role_id = game_info.get("role_id")
-            role_mention = ""
-            if associated_role_id:
-                role_mention = f"<@&{associated_role_id}>"
+            # Get the game owner for pinging
+            game_owner = game_info.get("game_owner")
+            owner_mention = ""
+            if game_owner:
+                try:
+                    # Find the game owner by username in the guild
+                    guild = channel.guild
+                    owner_member = None
+                    for member in guild.members:
+                        if member.name == game_owner:
+                            owner_member = member
+                            break
+                    
+                    if owner_member:
+                        owner_mention = owner_member.mention
+                except:
+                    pass
 
             # Create embed for game death
             import discord
@@ -348,9 +370,9 @@ class TimerManager:
                 color=discord.Color.red()
             )
 
-            # Send message with role ping
-            if role_mention:
-                await channel.send(content=role_mention, embed=embed)
+            # Send message with owner ping
+            if owner_mention:
+                await channel.send(content=owner_mention, embed=embed)
             else:
                 await channel.send(embed=embed)
             

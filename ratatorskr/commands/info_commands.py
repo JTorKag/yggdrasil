@@ -13,12 +13,229 @@ def register_info_commands(bot):
     
     @bot.tree.command(
         name="game-info",
-        description="Shows information about the current game.",
+        description="Fetches and displays details about the game in this channel.",
         guild=discord.Object(id=bot.guild_id)
     )
     @require_game_channel(bot.config)
     async def game_info_command(interaction: discord.Interaction):
-        await interaction.response.send_message("Game info command - implementation needed", ephemeral=True)
+        """
+        Fetch and display details about the game in the current channel in a single embed.
+        """
+        try:
+            # Defer interaction to prevent timeout
+            await interaction.response.defer()
+
+            # Get the game ID from the channel ID
+            game_id = await bot.db_instance.get_game_id_by_channel(interaction.channel_id)
+            if not game_id:
+                await interaction.followup.send("This channel is not associated with an active game.")
+                return
+
+            # Fetch game details
+            game_info = await bot.db_instance.get_game_info(game_id)
+            if not game_info:
+                await interaction.followup.send(f"No game found with ID {game_id}.")
+                return
+
+            # Get the host address from the config file
+            server_host = bot.config.get("server_host", "Unknown")
+
+            # Map story events and game era to human-readable values
+            story_events_map = {0: "None", 1: "Some", 2: "Full"}
+            story_events_value = story_events_map.get(game_info["story_events"], "Unknown")
+
+            era_map = {1: "Early", 2: "Middle", 3: "Late"}
+            game_era_value = era_map.get(game_info["game_era"], "Unknown")
+
+            # Create an embed to display the game details
+            embed = discord.Embed(
+                title=f"Game Info: {game_info['game_name']}",
+                description=f"Details for game ID **{game_id}**",
+                color=discord.Color.green(),
+            )
+
+            # Get current turn from statusdump
+            current_turn = "Unknown"
+            try:
+                from bifrost import bifrost
+                status_data = await bifrost.read_statusdump_file(game_id, bot.db_instance, bot.config)
+                if status_data:
+                    turn_num = status_data.get("turn", -1)
+                    if turn_num == -1:
+                        current_turn = "Lobby"
+                    else:
+                        current_turn = f"Turn {turn_num}"
+            except Exception:
+                current_turn = "Unknown"
+
+            # Add current turn info
+            embed.add_field(
+                name="🎯 Current Turn",
+                value=current_turn,
+                inline=False,
+            )
+
+            # Get timer information - show for all games
+            try:
+                timer_data = await bot.db_instance.get_game_timer(game_id)
+                player_control_timers = game_info.get('player_control_timers', True)
+                chess_clock_active = game_info.get('chess_clock_active', False)
+                
+                if timer_data:
+                    remaining_time = timer_data["remaining_time"]
+                    timer_default = timer_data["timer_default"]
+                    timer_running = timer_data["timer_running"]
+                    
+                    # Convert seconds to readable format
+                    remaining_readable = descriptive_time_breakdown(remaining_time) if remaining_time else "Unknown"
+                    
+                    # Check if it's a blitz game for default timer display
+                    if game_info.get("game_type", "").lower() == "blitz":
+                        default_readable = f"{timer_default / 60:.1f} minutes" if timer_default else "Unknown"
+                    else:
+                        hours = timer_default / 3600 if timer_default else 0
+                        if hours == int(hours):
+                            default_readable = f"{int(hours)} hours" if timer_default else "Unknown"
+                        else:
+                            default_readable = f"{hours:.1f} hours" if timer_default else "Unknown"
+                    
+                    timer_status = "🟢 Running" if timer_running else "🔴 Paused"
+                    extension_rule = "✅ Players can extend timers" if player_control_timers else "❌ Only owner/admin can extend timers"
+                    
+                    timer_value = (
+                        f"**Timer Remaining**: {remaining_readable}\n"
+                        f"**Timer Status**: {timer_status}\n"
+                        f"**Default Timer**: {default_readable}\n"
+                        f"**Extension Rules**: {extension_rule}"
+                    )
+                    
+                    # Add chess clock information if enabled
+                    if chess_clock_active:
+                        starting_time = game_info.get('chess_clock_starting_time', 0)
+                        per_turn_time = game_info.get('chess_clock_per_turn_time', 0)
+                        
+                        # Determine time units based on game type
+                        game_type = game_info.get('game_type', '').lower()
+                        if game_type == 'blitz':
+                            starting_display = f"{starting_time / 60:.1f} minutes"
+                            per_turn_display = f"{per_turn_time / 60:.1f} minutes"
+                        else:
+                            starting_display = f"{starting_time / 3600:.1f} hours"
+                            per_turn_display = f"{per_turn_time / 3600:.1f} hours"
+                        
+                        timer_value += (
+                            f"\n\n**♟️ Chess Clock**: ✅ Active\n"
+                            f"**Starting Time**: {starting_display}\n"
+                            f"**Per-Turn Bonus**: {per_turn_display}"
+                        )
+                    
+                    embed.add_field(
+                        name="⏰ Timer Status",
+                        value=timer_value,
+                        inline=False,
+                    )
+                else:
+                    extension_rule = "✅ Players can extend timers" if player_control_timers else "❌ Only owner/admin can extend timers"
+                    timer_value = f"No timer configured\n**Extension Rules**: {extension_rule}"
+                    
+                    # Add chess clock information if enabled
+                    if chess_clock_active:
+                        starting_time = game_info.get('chess_clock_starting_time', 0)
+                        per_turn_time = game_info.get('chess_clock_per_turn_time', 0)
+                        
+                        # Determine time units based on game type
+                        game_type = game_info.get('game_type', '').lower()
+                        if game_type == 'blitz':
+                            starting_display = f"{starting_time / 60:.1f} minutes"
+                            per_turn_display = f"{per_turn_time / 60:.1f} minutes"
+                        else:
+                            starting_display = f"{starting_time / 3600:.1f} hours"
+                            per_turn_display = f"{per_turn_time / 3600:.1f} hours"
+                        
+                        timer_value += (
+                            f"\n\n**♟️ Chess Clock**: ✅ Active\n"
+                            f"**Starting Time**: {starting_display}\n"
+                            f"**Per-Turn Bonus**: {per_turn_display}"
+                        )
+                    
+                    embed.add_field(
+                        name="⏰ Timer Status",
+                        value=timer_value,
+                        inline=False,
+                    )
+            except Exception as e:
+                extension_rule = "✅ Players can extend timers" if game_info.get('player_control_timers', True) else "❌ Only owner/admin can extend timers"
+                embed.add_field(
+                    name="⏰ Timer Status",
+                    value=f"Error fetching timer data\n**Extension Rules**: {extension_rule}",
+                    inline=False,
+                )
+
+            # Format and group details for the embed
+            embed.add_field(
+                name="Basic Information",
+                value=(
+                    f"**Game Name**: {game_info['game_name']}\n"
+                    f"**Game Type**: {game_info['game_type']}\n"
+                    f"**Game Era**: {game_era_value}\n"
+                    f"🔌 **Game Port**: {game_info['game_port']}\n"
+                    f"🌐 **Host Address**: {server_host}\n"
+                    f"**Game Owner**: {game_info['game_owner']}\n"
+                    f"**Version**: {game_info['creation_version']}\n"
+                    f"**Creation Date**: {game_info['creation_date']}\n"
+                    f"🔧 **Mods**: {game_info['game_mods']}\n"
+                    f"🗺 **Map**: {game_info['game_map']}\n"
+                ),
+                inline=False,
+            )
+
+            embed.add_field(
+                name="Settings",
+                value=(
+                    f"**Global Slots**: {game_info['global_slots']}\n"
+                    f"**Research Random**: {'True' if game_info['research_random'] else 'False'}\n"
+                    f"**Event Rarity**: {game_info['eventrarity']}\n"
+                    f"**Story Events**: {story_events_map[game_info['story_events']]}\n"
+                    f"**No Going AI**: {'True' if game_info['no_going_ai'] else 'False'}\n"
+                    f"**Team Game**: {'True' if game_info['teamgame'] else 'False'}\n"
+                    f"**Clustered Starts**: {'True' if game_info['clustered'] else 'False'}\n"
+                    f"**Edge Starts**: {'True' if game_info['edgestart'] else 'False'}\n"
+                    f"**No Artifact Restrictions**: {'True' if game_info['noartrest'] else 'False'}\n"
+                    f"**No Level 9 Restrictions**: {'True' if game_info['nolvl9rest'] else 'False'}\n"
+                ),
+                inline=False,
+            )
+
+            embed.add_field(
+                name="Gameplay Details",
+                value=(
+                    f"**Indie Strength**: {game_info['indie_str'] or 'Default'}\n"
+                    f"**Magic Sites**: {game_info['magicsites'] or 'Default'}\n"
+                    f"**Richness**: {game_info['richness'] or 'Default'}\n"
+                    f"**Resources**: {game_info['resources'] or 'Default'}\n"
+                    f"**Recruitment**: {game_info['recruitment'] or 'Default'}\n"
+                    f"**Supplies**: {game_info['supplies'] or 'Default'}\n"
+                    f"**Points to Win**: {game_info['requiredap']}\n"
+                    f"**Thrones**: {game_info['thrones']}\n"
+                ),
+                inline=False,
+            )
+
+            embed.add_field(
+                name="Game State",
+                value=(
+                    f"**Game Running**: {'True' if game_info['game_running'] else 'False'}\n"
+                    f"**Game Started**: {'True' if game_info['game_started'] else 'False'}\n"
+                    f"**Game Active**: {'True' if game_info['game_active'] else 'False'}"
+                ),
+                inline=False,
+            )
+
+            # Send the embed
+            await interaction.followup.send(embed=embed)
+
+        except Exception as e:
+            await interaction.followup.send(f"An error occurred: {e}")
 
     @bot.tree.command(
         name="get-version",

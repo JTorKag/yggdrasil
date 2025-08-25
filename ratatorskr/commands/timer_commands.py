@@ -375,6 +375,131 @@ def register_timer_commands(bot):
                 ),
                 inline=False
             )
+            
+            # Add chess clock information if active
+            chess_clock_active = game_info.get('chess_clock_active', False)
+            if chess_clock_active:
+                try:
+                    # Get all players in the game and their chess clock times
+                    players = await bot.db_instance.get_players_in_game(game_id)
+                    per_turn_bonus = game_info.get('chess_clock_per_turn_time', 0)
+                    
+                    if players:
+                        # Format per-turn bonus based on game type
+                        if game_info.get("game_type", "").lower() == "blitz":
+                            bonus_display = f"{per_turn_bonus / 60:.1f} minutes"
+                            time_unit = "min"
+                        else:
+                            bonus_display = f"{per_turn_bonus / 3600:.1f} hours"
+                            time_unit = "hr"
+                        
+                        # Get chess clock times per unique player (not per nation)
+                        clock_info = []
+                        seen_players = {}
+                        
+                        for player in players:
+                            player_id = player["player_id"]
+                            nation_name = player.get("nation", "Unknown")
+                            
+                            try:
+                                # Only show chess clock once per unique player
+                                if player_id not in seen_players:
+                                    # Get Discord user info
+                                    try:
+                                        if getattr(bot, 'config', {}).get("debug", False):
+                                            print(f"[TIMER DEBUG] Trying to resolve player_id: {player_id} (type: {type(player_id)})")
+                                        
+                                        user = interaction.guild.get_member(int(player_id))
+                                        if user:
+                                            display_name = user.display_name
+                                            if getattr(bot, 'config', {}).get("debug", False):
+                                                print(f"[TIMER DEBUG] Found guild member: {display_name}")
+                                        else:
+                                            # Try to get user from client cache if not in guild
+                                            user = bot.get_user(int(player_id))
+                                            if user:
+                                                display_name = user.name
+                                                if getattr(bot, 'config', {}).get("debug", False):
+                                                    print(f"[TIMER DEBUG] Found user via client: {display_name}")
+                                            else:
+                                                # Try fetching user via API call
+                                                try:
+                                                    user = await bot.fetch_user(int(player_id))
+                                                    if user:
+                                                        display_name = user.name
+                                                        if getattr(bot, 'config', {}).get("debug", False):
+                                                            print(f"[TIMER DEBUG] Found user via fetch: {display_name}")
+                                                    else:
+                                                        display_name = f"User {player_id}"
+                                                        if getattr(bot, 'config', {}).get("debug", False):
+                                                            print(f"[TIMER DEBUG] Could not find user via fetch, using fallback: {display_name}")
+                                                except Exception as fetch_error:
+                                                    display_name = f"User {player_id}"
+                                                    if getattr(bot, 'config', {}).get("debug", False):
+                                                        print(f"[TIMER DEBUG] Fetch user failed: {fetch_error}")
+                                    except (ValueError, AttributeError) as e:
+                                        display_name = f"User {player_id}"
+                                        if getattr(bot, 'config', {}).get("debug", False):
+                                            print(f"[TIMER DEBUG] Exception resolving user: {e}")
+                                    
+                                    # Get chess clock time - find the max time for this player across all their nations
+                                    player_nations = [p for p in players if p["player_id"] == player_id]
+                                    max_clock_time = 0
+                                    nations_list = []
+                                    
+                                    for nation_record in player_nations:
+                                        nation = nation_record.get("nation", "Unknown")
+                                        nations_list.append(nation)
+                                        clock_time = nation_record.get("chess_clock_time_remaining", 0)
+                                        if clock_time and clock_time > max_clock_time:
+                                            max_clock_time = clock_time
+                                    
+                                    if max_clock_time >= 0:
+                                        # Format time based on game type
+                                        if game_info.get("game_type", "").lower() == "blitz":
+                                            time_display = f"{max_clock_time / 60:.1f}{time_unit}"
+                                        else:
+                                            time_display = f"{max_clock_time / 3600:.1f}{time_unit}"
+                                        
+                                        nations_str = ", ".join(nations_list)
+                                        clock_info.append(f"**{display_name}** ({nations_str}): {time_display}")
+                                    else:
+                                        nations_str = ", ".join(nations_list)
+                                        clock_info.append(f"**{display_name}** ({nations_str}): No data")
+                                    
+                                    seen_players[player_id] = True
+                                    
+                            except Exception as e:
+                                if getattr(bot, 'config', {}).get("debug", False):
+                                    print(f"[TIMER] Error processing player {player_id}: {e}")
+                                if player_id not in seen_players:
+                                    clock_info.append(f"**Unknown** ({nation_name}): Error")
+                                    seen_players[player_id] = True
+                        
+                        # Create the chess clock field
+                        chess_clock_text = "\n".join(clock_info) if clock_info else "No player data available"
+                        chess_clock_text += f"\n\n**Per-Turn Bonus**: +{bonus_display}"
+                        
+                        embed.add_field(
+                            name="♟️ Chess Clock - All Players",
+                            value=chess_clock_text,
+                            inline=False
+                        )
+                    else:
+                        embed.add_field(
+                            name="♟️ Chess Clock Active",
+                            value=f"No players found\n**Per-Turn Bonus**: +{bonus_display}",
+                            inline=False
+                        )
+                except Exception as e:
+                    # Error getting chess clock info, but don't fail the whole command
+                    if getattr(bot, 'config', {}).get("debug", False):
+                        print(f"[TIMER] Error retrieving chess clock info: {e}")
+                    embed.add_field(
+                        name="♟️ Chess Clock Active",
+                        value="Could not retrieve chess clock information",
+                        inline=False
+                    )
 
             embed.set_footer(text=f"Game ID: {game_id}")
 

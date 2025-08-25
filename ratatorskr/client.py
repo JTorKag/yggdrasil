@@ -5,6 +5,10 @@ Main Discord client for the Ratatorskr bot.
 import discord
 from discord import app_commands
 from .utils import descriptive_time_breakdown
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from .commands import (
     game_management,
     timer_commands,
@@ -17,8 +21,14 @@ from .commands import (
 
 class discordClient(discord.Client):
     def __init__(self, *, intents, db_instance, bot_ready_signal, config: dict, nidhogg):
+        if config and config.get("debug", False):
+            print("[CLIENT] Initializing Discord client...")
         super().__init__(intents=intents)
+        if config and config.get("debug", False):
+            print("[CLIENT] Discord client base initialized")
         self.tree = app_commands.CommandTree(self)
+        if config and config.get("debug", False):
+            print("[CLIENT] Command tree created")
         self.guild_id = config["guild_id"]
         self.db_instance = db_instance
         self.bot_ready_signal = bot_ready_signal
@@ -26,6 +36,8 @@ class discordClient(discord.Client):
         self.bot_channels = list(map(int, config.get("primary_bot_channel", [])))
         self.config = config
         self.nidhogg = nidhogg
+        if config and config.get("debug", False):
+            print("[CLIENT] Discord client initialization complete")
    
     def descriptive_time_breakdown(self, seconds: int) -> str:
         """
@@ -110,18 +122,41 @@ class discordClient(discord.Client):
         """
         Register all commands from the various command modules.
         """
+        if self.config and self.config.get("debug", False):
+            print("[CLIENT] Starting setup_hook...")
+        
         # Register all command modules
+        if self.config and self.config.get("debug", False):
+            print("[CLIENT] Registering game management commands...")
         game_management.register_game_management_commands(self)
+        if self.config and self.config.get("debug", False):
+            print("[CLIENT] Registering timer commands...")
         timer_commands.register_timer_commands(self)
+        if self.config and self.config.get("debug", False):
+            print("[CLIENT] Registering player commands...")
         player_commands.register_player_commands(self)
+        if self.config and self.config.get("debug", False):
+            print("[CLIENT] Registering admin commands...")
         admin_commands.register_admin_commands(self)
+        if self.config and self.config.get("debug", False):
+            print("[CLIENT] Registering file commands...")
         file_commands.register_file_commands(self)
+        if self.config and self.config.get("debug", False):
+            print("[CLIENT] Registering info commands...")
         info_commands.register_info_commands(self)
+        if self.config and self.config.get("debug", False):
+            print("[CLIENT] All commands registered")
         
         # Sync the command tree with Discord
+        if self.config and self.config.get("debug", False):
+            print("[CLIENT] Syncing command tree with Discord...")
         await self.tree.sync(guild=discord.Object(id=self.guild_id))
         print("Commands synced!")
         
         # Signal that the bot is ready
+        if self.config and self.config.get("debug", False):
+            print("[CLIENT] Setting bot ready signal...")
         if self.bot_ready_signal:
             self.bot_ready_signal.set()
+        if self.config and self.config.get("debug", False):
+            print("[CLIENT] Setup hook complete!")

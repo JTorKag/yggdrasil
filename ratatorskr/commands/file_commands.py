@@ -109,7 +109,20 @@ def register_file_commands(bot):
     @require_primary_bot_channel(bot.config)
     @require_game_host_or_admin(bot.config)
     async def upload_map_command(interaction: discord.Interaction, map_file: discord.Attachment):
-        await interaction.response.send_message("Upload map command - implementation needed", ephemeral=True)
+        try:
+            file_data = await map_file.read()
+            result = await bifrost.handle_map_upload(file_data, map_file.filename, bot.config)
+            
+            if result["success"]:
+                await interaction.response.send_message(
+                    f"Map {map_file.filename} successfully uploaded and extracted."
+                )
+            else:
+                await interaction.response.send_message(
+                    f"Failed to upload and extract map: {result['error']}", ephemeral=True
+                )
+        except Exception as e:
+            await interaction.response.send_message(f"An unexpected error occurred: {e}", ephemeral=True)
 
     @bot.tree.command(
         name="upload-mod",
@@ -119,7 +132,20 @@ def register_file_commands(bot):
     @require_primary_bot_channel(bot.config)
     @require_game_host_or_admin(bot.config)
     async def upload_mod_command(interaction: discord.Interaction, mod_file: discord.Attachment):
-        await interaction.response.send_message("Upload mod command - implementation needed", ephemeral=True)
+        try:
+            file_data = await mod_file.read()
+            result = await bifrost.handle_mod_upload(file_data, mod_file.filename, bot.config)
+            
+            if result["success"]:
+                await interaction.response.send_message(
+                    f"Mod {mod_file.filename} successfully uploaded and extracted."
+                )
+            else:
+                await interaction.response.send_message(
+                    f"Failed to upload and extract mod: {result['error']}", ephemeral=True
+                )
+        except Exception as e:
+            await interaction.response.send_message(f"An unexpected error occurred: {e}", ephemeral=True)
 
     @bot.tree.command(
         name="select-map",

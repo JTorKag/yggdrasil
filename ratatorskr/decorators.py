@@ -14,6 +14,11 @@ def require_bot_channel(config):
         async def wrapper(interaction: discord.Interaction, *args, **kwargs):
             bot = interaction.client  # Access the bot instance from the interaction
             command_name = interaction.command.name  # Get the name of the command being executed
+            
+            # Wait for bot to be fully ready before processing commands
+            if hasattr(bot, 'bot_ready_signal') and bot.bot_ready_signal and not bot.bot_ready_signal.is_set():
+                await interaction.response.send_message("Bot is still starting up, please wait a moment...", ephemeral=True)
+                return
 
             # Get allowed bot-specific channels
             primary_bot_channel = list(map(int, config.get("primary_bot_channel", [])))
@@ -46,6 +51,13 @@ def require_primary_bot_channel(config):
     def decorator(command_func: Callable[..., Awaitable[None]]) -> Callable[..., Awaitable[None]]:
         @wraps(command_func)
         async def wrapper(interaction: discord.Interaction, *args, **kwargs):
+            bot = interaction.client
+            
+            # Wait for bot to be fully ready before processing commands
+            if hasattr(bot, 'bot_ready_signal') and bot.bot_ready_signal and not bot.bot_ready_signal.is_set():
+                await interaction.response.send_message("Bot is still starting up, please wait a moment...", ephemeral=True)
+                return
+                
             # Get primary bot channel only (no game channels)
             primary_bot_channel = list(map(int, config.get("primary_bot_channel", [])))
             allowed_channels = set(primary_bot_channel)
@@ -67,6 +79,11 @@ def require_game_channel(config):
         async def wrapper(interaction: discord.Interaction, *args, **kwargs):
             bot = interaction.client  # Access the bot instance from the interaction
             command_name = interaction.command.name  # Get the name of the command being executed
+            
+            # Wait for bot to be fully ready before processing commands
+            if hasattr(bot, 'bot_ready_signal') and bot.bot_ready_signal and not bot.bot_ready_signal.is_set():
+                await interaction.response.send_message("Bot is still starting up, please wait a moment...", ephemeral=True)
+                return
 
             # Get game channels only (no main bot channels)
             allowed_channels = set()
@@ -78,16 +95,28 @@ def require_game_channel(config):
                     for game in await bot.db_instance.get_inactive_games()
                 ]
                 allowed_channels.update(inactive_game_channels)
+                if config and config.get("debug", False):
+                    print(f"[DECORATOR] {command_name} - inactive game channels: {inactive_game_channels}")
             else:
                 # Add active game channels only
                 active_game_channels = await bot.db_instance.get_active_game_channels()
                 allowed_channels.update(active_game_channels)
+                if config and config.get("debug", False):
+                    print(f"[DECORATOR] {command_name} - active game channels: {active_game_channels}")
+
+            if config and config.get("debug", False):
+                print(f"[DECORATOR] {command_name} - current channel: {interaction.channel_id}")
+                print(f"[DECORATOR] {command_name} - allowed channels: {allowed_channels}")
 
             # Check if the current channel is a game channel
             if interaction.channel_id in allowed_channels:
+                if config and config.get("debug", False):
+                    print(f"[DECORATOR] {command_name} - channel check PASSED")
                 return await command_func(interaction, *args, **kwargs)
 
             # Deny access if the channel is not a game channel
+            if config and config.get("debug", False):
+                print(f"[DECORATOR] {command_name} - channel check FAILED")
             await interaction.response.send_message("This command can only be used in game channels.", ephemeral=True)
         return wrapper
     return decorator
@@ -98,6 +127,13 @@ def require_game_admin(config):
     def decorator(command_func: Callable[..., Awaitable[None]]) -> Callable[..., Awaitable[None]]:
         @wraps(command_func)
         async def wrapper(interaction: discord.Interaction, *args, **kwargs):
+            bot = interaction.client
+            
+            # Wait for bot to be fully ready before processing commands
+            if hasattr(bot, 'bot_ready_signal') and bot.bot_ready_signal and not bot.bot_ready_signal.is_set():
+                await interaction.response.send_message("Bot is still starting up, please wait a moment...", ephemeral=True)
+                return
+                
             # Get the game admin role ID from the config
             admin_role_id = int(config.get("game_admin"))
             # Get the admin role from the guild
@@ -128,6 +164,13 @@ def require_game_owner_or_admin(config):
     def decorator(command_func: Callable[..., Awaitable[None]]) -> Callable[..., Awaitable[None]]:
         @wraps(command_func)
         async def wrapper(interaction: discord.Interaction, *args, **kwargs):
+            bot = interaction.client
+            
+            # Wait for bot to be fully ready before processing commands
+            if hasattr(bot, 'bot_ready_signal') and bot.bot_ready_signal and not bot.bot_ready_signal.is_set():
+                await interaction.response.send_message("Bot is still starting up, please wait a moment...", ephemeral=True)
+                return
+                
             # Get the game admin role ID from the config
             admin_role_id = int(config.get("game_admin"))
             # Get the admin role from the guild
@@ -178,6 +221,13 @@ def require_game_host_or_admin(config):
     def decorator(command_func: Callable[..., Awaitable[None]]) -> Callable[..., Awaitable[None]]:
         @wraps(command_func)
         async def wrapper(interaction: discord.Interaction, *args, **kwargs):
+            bot = interaction.client
+            
+            # Wait for bot to be fully ready before processing commands
+            if hasattr(bot, 'bot_ready_signal') and bot.bot_ready_signal and not bot.bot_ready_signal.is_set():
+                await interaction.response.send_message("Bot is still starting up, please wait a moment...", ephemeral=True)
+                return
+                
             # Get the role IDs from the config
             host_role_id = int(config.get("game_host"))
             admin_role_id = int(config.get("game_admin"))

@@ -3,6 +3,7 @@ Player-related commands - claiming nations, managing pretenders, etc.
 """
 
 import discord
+from discord import app_commands
 from datetime import datetime, timezone, timedelta
 from typing import List
 from bifrost import bifrost
@@ -20,7 +21,7 @@ def register_player_commands(bot):
     @require_game_channel(bot.config)
     async def claim_command(interaction: discord.Interaction, nation_name: str):
         """Allows a user to claim a nation in the game."""
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer()
 
         # Get the game ID associated with the current channel
         game_id = await bot.db_instance.get_game_id_by_channel(interaction.channel_id)
@@ -42,9 +43,9 @@ def register_player_commands(bot):
                 await interaction.followup.send(f"{nation_name} is not a valid nation for this game.")
                 return
 
-            # Check if the player already owns the nation
-            already_exists = await bot.db_instance.check_player_nation(game_id, str(interaction.user.id), nation_name)
-            if already_exists:
+            # Check if the player currently owns the nation
+            currently_owns = await bot.db_instance.check_player_nation(game_id, str(interaction.user.id), nation_name)
+            if currently_owns:
                 # Fetch the role
                 guild = interaction.guild
                 role_name = f"{game_info['game_name']} player"
@@ -65,19 +66,71 @@ def register_player_commands(bot):
 
                 return
 
+            # Check if the player previously owned this nation but left the game
+            previously_owned = await bot.db_instance.check_player_previously_owned(game_id, str(interaction.user.id), nation_name)
+            if previously_owned:
+                # Check if player has any currently claimed nations (for chess clock logic)
+                player_has_nations = await bot.db_instance.player_has_claimed_nations(game_id, str(interaction.user.id))
+                
+                # Re-claim the nation instead of creating a new record
+                await bot.db_instance.reclaim_nation(game_id, str(interaction.user.id), nation_name)
+                print(f"Player {interaction.user.name} reclaimed nation {nation_name} in game {game_id}.")
+                
+                # Initialize chess clock time if chess clock mode is active and they have no other nations
+                chess_clock_time = 0
+                chess_clock_active = game_info.get("chess_clock_active", False)
+                if chess_clock_active and not player_has_nations:
+                    chess_clock_time = game_info.get("chess_clock_starting_time", 0)
+                    await bot.db_instance.update_player_chess_clock_time(game_id, str(interaction.user.id), chess_clock_time)
+
+                # Create or fetch the role and assign it to the player
+                guild = interaction.guild
+                role_name = f"{game_info['game_name']} player"
+
+                role = discord.utils.get(guild.roles, name=role_name)
+                if not role:
+                    # Create the role
+                    role = await guild.create_role(name=role_name)
+                    print(f"Role '{role_name}' created successfully.")
+
+                # Assign the role to the player if they don't already have it
+                if role not in interaction.user.roles:
+                    await interaction.user.add_roles(role)
+                    print(f"Assigned role '{role_name}' to user {interaction.user.name}.")
+
+                # Create success message
+                message = f"✅ **Welcome back!** You have **re-claimed** {nation_name} and have been assigned the role '{role_name}'."
+                
+                # Add chess clock info if applicable
+                if chess_clock_active and chess_clock_time > 0:
+                    if game_info.get("game_type", "").lower() == "blitz":
+                        time_display = f"{chess_clock_time / 60:.1f} minutes"
+                    else:
+                        time_display = f"{chess_clock_time / 3600:.1f} hours"
+                    message += f"\n⏱️ Your chess clock time has been reset to {time_display}."
+                elif chess_clock_active and player_has_nations:
+                    message += f"\n⏱️ Chess clock time unchanged (you already have nations claimed)."
+                
+                await interaction.followup.send(message)
+                return
+
+            # Check if player already has claimed nations (for chess clock logic)
+            player_has_nations = await bot.db_instance.player_has_claimed_nations(game_id, str(interaction.user.id))
+            
+            # Calculate chess clock time to initialize
+            chess_clock_time = 0
+            chess_clock_active = game_info.get("chess_clock_active", False)
+            if chess_clock_active and not player_has_nations:
+                # Only set starting time if this is their first nation in the game
+                chess_clock_time = game_info.get("chess_clock_starting_time", 0)
+
             # Add player to the database
             try:
-                await bot.db_instance.add_player(game_id, str(interaction.user.id), nation_name)
+                await bot.db_instance.add_player(game_id, str(interaction.user.id), nation_name, chess_clock_time)
                 print(f"Added player {interaction.user.name} as {nation_name} in game {game_id}.")
             except Exception as e:
                 await interaction.followup.send(f"Failed to add you as {nation_name} in the database: {e}")
                 return
-
-            # Initialize chess clock time if chess clock mode is active
-            chess_clock_active = game_info.get("chess_clock_active", False)
-            if chess_clock_active:
-                starting_time = game_info.get("chess_clock_starting_time", 0)
-                await bot.db_instance.update_player_chess_clock_time(game_id, str(interaction.user.id), starting_time)
 
             # Create or fetch the role and assign it to the player
             guild = interaction.guild
@@ -97,12 +150,14 @@ def register_player_commands(bot):
             message = f"You have successfully claimed {nation_name} and have been assigned the role '{role_name}'."
             
             # Add chess clock info if applicable
-            if chess_clock_active and starting_time > 0:
+            if chess_clock_active and chess_clock_time > 0:
                 if game_info.get("game_type", "").lower() == "blitz":
-                    time_display = f"{starting_time / 60:.1f} minutes"
+                    time_display = f"{chess_clock_time / 60:.1f} minutes"
                 else:
-                    time_display = f"{starting_time / 3600:.1f} hours"
+                    time_display = f"{chess_clock_time / 3600:.1f} hours"
                 message += f"\n⏱️ You have been given {time_display} of chess clock time."
+            elif chess_clock_active and player_has_nations:
+                message += f"\n⏱️ Chess clock time unchanged (you already have nations claimed)."
             
             await interaction.followup.send(message)
         except Exception as e:
@@ -110,12 +165,13 @@ def register_player_commands(bot):
 
     @bot.tree.command(
         name="unclaim",
-        description="Unclaims your nation in the game.",
+        description="[Admin/Owner] Completely removes a nation claim (deletes all records).",
         guild=discord.Object(id=bot.guild_id)
     )
     @require_game_channel(bot.config)
+    @require_game_owner_or_admin(bot.config)
     async def unclaim_command(interaction: discord.Interaction, nation_name: str):
-        """Allows a player to unclaim a nation."""
+        """Allows game owner/admin to completely remove any nation claim."""
         await interaction.response.defer()
 
         # Get the game ID associated with the current channel
@@ -127,34 +183,138 @@ def register_player_commands(bot):
         # Get game information
         game_info = await bot.db_instance.get_game_info(game_id)
         if not game_info:
-            await interaction.followup.send("Game information not found in the database.", ephemeral=True)
+            await interaction.followup.send("Game information not found in the database.")
             return
 
-        game_name = game_info["game_name"]
-        role_name = f"{game_name} player"
-
-        # Check if the user has the role
-        guild = interaction.guild
-        if not guild:
-            await interaction.followup.send("Unable to fetch guild information.", ephemeral=True)
-            return
-
-        member = interaction.user
-        role = discord.utils.get(guild.roles, name=role_name)
-
-        if not role or role not in member.roles:
-            await interaction.followup.send(f"You do not have the role '{role_name}' to unclaim.", ephemeral=True)
-            return
-
-        # Remove the role from the user
+        # Find who currently has this nation claimed
         try:
-            await member.remove_roles(role)
-            await bot.db_instance.unclaim_nation(game_id, str(interaction.user.id), nation_name)
-            await interaction.followup.send(f"Role '{role_name}' has been removed from you, and nation '{nation_name}' has been unclaimed.", ephemeral=True)
-        except discord.Forbidden:
-            await interaction.followup.send("I don't have permission to remove this role.", ephemeral=True)
+            claimed_nations = await bot.db_instance.get_claimed_nations(game_id)
+            player_ids = claimed_nations.get(nation_name, [])
+            
+            if not player_ids:
+                await interaction.followup.send(f"Nation '{nation_name}' is not currently claimed by anyone.")
+                return
+            
+            # For simplicity, unclaim from the first player who has it
+            # (In normal cases, there should only be one player per nation)
+            target_player_id = player_ids[0]
+            
+            # Completely remove the nation entry from database
+            rows_deleted = await bot.db_instance.delete_player_nation(game_id, target_player_id, nation_name)
+            
+            if rows_deleted == 0:
+                await interaction.followup.send(f"No matching record found for nation '{nation_name}' and the target player.")
+                return
+            
+            # Get the target player's Discord member object
+            guild = interaction.guild
+            target_member = None
+            if guild:
+                target_member = guild.get_member(int(target_player_id))
+            
+            # Remove role from the player if they exist and have no other claimed nations
+            role_removed = False
+            if target_member:
+                game_name = game_info["game_name"]
+                role_name = f"{game_name} player"
+                role = discord.utils.get(guild.roles, name=role_name)
+                
+                if role and role in target_member.roles:
+                    # Check if player has any other nations claimed in this game
+                    remaining_nations = await bot.db_instance.get_claimed_nations_by_player(game_id, target_player_id)
+                    
+                    if not remaining_nations:  # No other nations claimed
+                        try:
+                            await target_member.remove_roles(role)
+                            role_removed = True
+                        except discord.Forbidden:
+                            pass  # Ignore permission errors for role removal
+            
+            # Create response message
+            target_display = target_member.display_name if target_member else f"Player ID {target_player_id}"
+            message = f"✅ Nation '{nation_name}' has been **completely removed** from **{target_display}**."
+            message += f"\n🗑️ All records (claim, extensions, chess clock time) have been deleted."
+            
+            if role_removed:
+                message += f"\n🎭 Role '{role_name}' was also removed (no remaining nations)."
+            
+            await interaction.followup.send(message)
+            
         except Exception as e:
-            await interaction.followup.send(f"An error occurred while removing the role: {e}", ephemeral=True)
+            await interaction.followup.send(f"An error occurred while unclaiming: {e}")
+
+    @bot.tree.command(
+        name="leave-game",
+        description="Leave the game by unclaiming all your nations.",
+        guild=discord.Object(id=bot.guild_id)
+    )
+    @require_game_channel(bot.config)
+    async def leave_game_command(interaction: discord.Interaction):
+        """Allows a player to leave the game by unclaiming all their nations."""
+        await interaction.response.defer(ephemeral=True)
+
+        # Get the game ID associated with the current channel
+        game_id = await bot.db_instance.get_game_id_by_channel(interaction.channel_id)
+        if not game_id:
+            await interaction.followup.send("No game is associated with this channel.")
+            return
+
+        # Get game information
+        game_info = await bot.db_instance.get_game_info(game_id)
+        if not game_info:
+            await interaction.followup.send("Game information not found in the database.")
+            return
+
+        player_id = str(interaction.user.id)
+        
+        try:
+            # Get all nations this player currently has claimed
+            player_nations = await bot.db_instance.get_claimed_nations_by_player(game_id, player_id)
+            
+            if not player_nations:
+                await interaction.followup.send("You don't have any nations claimed in this game.", ephemeral=True)
+                return
+            
+            # Unclaim all their nations
+            unclaimed_nations = []
+            for nation in player_nations:
+                try:
+                    await bot.db_instance.unclaim_nation(game_id, player_id, nation)
+                    unclaimed_nations.append(nation)
+                except Exception as e:
+                    print(f"Error unclaiming {nation} for player {player_id}: {e}")
+            
+            # Remove the player role
+            guild = interaction.guild
+            role_removed = False
+            if guild:
+                game_name = game_info["game_name"]
+                role_name = f"{game_name} player"
+                role = discord.utils.get(guild.roles, name=role_name)
+                
+                if role and role in interaction.user.roles:
+                    try:
+                        await interaction.user.remove_roles(role)
+                        role_removed = True
+                    except discord.Forbidden:
+                        pass  # Ignore permission errors
+            
+            # Create response message
+            if unclaimed_nations:
+                nations_text = ", ".join(unclaimed_nations)
+                message = f"✅ You have left the game. Unclaimed nations: **{nations_text}**"
+                
+                if role_removed:
+                    message += f"\n🔹 Role '{role_name}' has been removed."
+                
+                message += "\n\n📋 **Note**: Your play history is preserved in the game records."
+            else:
+                message = "❌ No nations were successfully unclaimed."
+            
+            await interaction.followup.send(message, ephemeral=True)
+            
+        except Exception as e:
+            await interaction.followup.send(f"An error occurred while leaving the game: {e}", ephemeral=True)
 
     @bot.tree.command(
         name="pretenders",
@@ -413,9 +573,61 @@ def register_player_commands(bot):
         except Exception as e:
             await interaction.followup.send(f"Error querying turn for game id:{game_id}\n{str(e)}")
 
+    @claim_command.autocomplete("nation_name")
+    async def autocomplete_nation(
+        interaction: discord.Interaction, current: str
+    ) -> List[app_commands.Choice]:
+        """Autocomplete handler for the 'nation_name' argument."""
+        try:
+            # Get the game ID associated with the current channel
+            game_id = await bot.db_instance.get_game_id_by_channel(interaction.channel_id)
+            if not game_id:
+                return []
+
+            # Retrieve the list of valid nations for the game
+            valid_nations = await bifrost.get_valid_nations_from_files(game_id, bot.config, bot.db_instance)
+
+            # Filter the nations by the current input
+            filtered_nations = [nation for nation in valid_nations if current.lower() in nation.lower()]
+
+            # Return the autocomplete choices (Discord limits to 25 items)
+            return [app_commands.Choice(name=nation, value=nation) for nation in filtered_nations[:25]]
+
+        except Exception as e:
+            print(f"Error in claim autocomplete: {e}")
+            return []
+
+    @unclaim_command.autocomplete("nation_name")
+    async def unclaim_autocomplete(
+        interaction: discord.Interaction, current: str
+    ) -> List[app_commands.Choice]:
+        """Autocomplete handler for the unclaim command 'nation_name' argument."""
+        try:
+            # Get the game ID associated with the current channel
+            game_id = await bot.db_instance.get_game_id_by_channel(interaction.channel_id)
+            if not game_id:
+                return []
+
+            # Get all currently claimed nations in the game
+            claimed_nations = await bot.db_instance.get_claimed_nations(game_id)
+            
+            # Extract all nation names that are currently claimed
+            all_claimed_nations = list(claimed_nations.keys())
+
+            # Filter the nations based on the current input
+            filtered_nations = [nation for nation in all_claimed_nations if current.lower() in nation.lower()]
+
+            # Return the autocomplete choices (Discord limits to 25 items)
+            return [app_commands.Choice(name=nation, value=nation) for nation in filtered_nations[:25]]
+
+        except Exception as e:
+            print(f"Error in unclaim autocomplete: {e}")
+            return []
+
     return [
         claim_command,
         unclaim_command,
+        leave_game_command,
         pretenders_command,
         clear_claims_command,
         undone_command
