@@ -235,7 +235,8 @@ def register_player_commands(bot):
             if bot.config and bot.config.get("debug", False):
                 print(f"[DEBUG] claim_command dropdown returned {len(selected_nations) if selected_nations else 0} selected nations: {selected_nations}")
             
-            if not selected_nations:
+            # Allow empty selection if player has current nations (means they want to unclaim all)
+            if not selected_nations and not current_nation_names:
                 await interaction.followup.send("No nations selected.", ephemeral=True)
                 return
 
@@ -259,7 +260,7 @@ def register_player_commands(bot):
                 for nation_to_unclaim in nations_to_unclaim:
                     try:
                         await bot.db_instance.delete_player_nation(game_id, str(interaction.user.id), nation_to_unclaim)
-                        results.append(f"❌ **Unclaimed** {nation_to_unclaim}")
+                        results.append(f"❌ **{interaction.user.display_name}** unclaimed {nation_to_unclaim}")
                         if bot.config and bot.config.get("debug", False):
                             print(f"Player {interaction.user.name} unclaimed nation {nation_to_unclaim} in game {game_id}.")
                     except Exception as e:
@@ -279,12 +280,12 @@ def register_player_commands(bot):
                 try:
                     if previously_owned:
                         await bot.db_instance.reclaim_nation(game_id, str(interaction.user.id), nation_name)
-                        results.append(f"✅ **Re-claimed** {nation_name}")
+                        results.append(f"✅ **{interaction.user.display_name}** re-claimed {nation_name}")
                         if bot.config and bot.config.get("debug", False):
                             print(f"Player {interaction.user.name} reclaimed nation {nation_name} in game {game_id}.")
                     else:
                         await bot.db_instance.add_player(game_id, str(interaction.user.id), nation_name, chess_clock_time)
-                        results.append(f"✅ **Claimed** {nation_name}")
+                        results.append(f"✅ **{interaction.user.display_name}** claimed {nation_name}")
                         if bot.config and bot.config.get("debug", False):
                             print(f"Added player {interaction.user.name} as {nation_name} in game {game_id}.")
                         
@@ -329,14 +330,6 @@ def register_player_commands(bot):
                 if role_message:
                     message_parts.append(role_message)
                 
-                if chess_clock_active and first_time_claiming:
-                    starting_time = game_info.get("chess_clock_starting_time", 0)
-                    if starting_time > 0:
-                        if game_info.get("game_type", "").lower() == "blitz":
-                            time_display = f"{starting_time / 60:.1f} minutes"
-                        else:
-                            time_display = f"{starting_time / 3600:.1f} hours"
-                        message_parts.append(f"⏱️ You will receive {time_display} of chess clock time when the game starts.")
 
             if errors:
                 message_parts.append(f"\n**Errors:**\n" + "\n".join(errors))
