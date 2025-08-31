@@ -144,8 +144,8 @@ class nidhogg:
             
             screen_command_with_log = ["screen", "-dmS", screen_name, "-L", "-Logfile", str(log_file)] + command
             
-            if config and config.get("debug", False):
-                print(f"[DEBUG] Screen command with logging: {shlex.join(screen_command_with_log)}")
+
+            print(f"Lobby launched with logging: {shlex.join(screen_command_with_log)}")
             
             screen_process = subprocess.Popen(
                 screen_command_with_log,

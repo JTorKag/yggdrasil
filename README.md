@@ -99,7 +99,7 @@ These are mostly just to run the dom binary.
 ### **Installation**
 1. Clone the repository:
    ```bash
-   git clone https://github.com/your-repo/yggdrasil.git
+   git clone https://github.com/JTorKag/yggdrasil.git
    cd yggdrasil
    ```
 
@@ -111,7 +111,7 @@ These are mostly just to run the dom binary.
    ```
 
 3. Configure the application:
-   - Create a configuration file (e.g., `config.json`).
+   - Create a configuration file (e.g., `config.json`). "Use template provided"
    - Use absolute folder paths.
    - Add required details such as:
      - Discord Bot Token
