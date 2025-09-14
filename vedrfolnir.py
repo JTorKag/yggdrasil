@@ -1097,6 +1097,22 @@ class dbClient:
         
         return await self._execute_with_retry(_operation)
 
+    async def get_currently_claimed_players(self, game_id):
+        """Fetch only currently claimed players in a specific game."""
+        async def _operation():
+            query = '''
+            SELECT * FROM players WHERE game_id = ? AND currently_claimed = 1;
+            '''
+            async with self.connection.cursor() as cursor:
+                await cursor.execute(query, (game_id,))
+                rows = await cursor.fetchall()
+                if rows:
+                    columns = [column[0] for column in cursor.description]
+                    return [dict(zip(columns, row)) for row in rows]
+                return []
+        
+        return await self._execute_with_retry(_operation)
+
     async def set_game_start_attempted(self, game_id: int, attempted: bool):
         """Set the game_start_attempted flag for a game."""
         async def _operation():
@@ -1113,6 +1129,24 @@ class dbClient:
         async def _operation():
             query = '''
             SELECT game_id, game_name, channel_id, role_id, game_owner, game_running 
+            FROM games 
+            WHERE game_active = 1
+            '''
+            async with self.connection.cursor() as cursor:
+                await cursor.execute(query)
+                rows = await cursor.fetchall()
+                if rows:
+                    columns = [column[0] for column in cursor.description]
+                    return [dict(zip(columns, row)) for row in rows]
+                return []
+        
+        return await self._execute_with_retry(_operation)
+
+    async def get_running_games(self):
+        """Get all games where game_running=True, for crash detection purposes."""
+        async def _operation():
+            query = '''
+            SELECT game_id, game_name, channel_id, role_id, game_owner, game_running, game_started
             FROM games 
             WHERE game_running = 1
             '''

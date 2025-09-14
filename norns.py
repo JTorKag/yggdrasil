@@ -50,6 +50,12 @@ class TimerManager:
                         print(f"[DEBUG] Checking turn transition for game ID {game_id} (game_start_attempted=true, game_started=false)")
                     await self.check_turn_transition(game_id)
 
+                # Check all running games for crashes (including lobby games without timers)
+                running_games = await self.db_instance.get_running_games()
+                for game in running_games:
+                    game_id = game["game_id"]
+                    await self.check_screen_session_alive(game_id, game)
+
                 active_timers = await self.db_instance.get_active_timers()
 
                 for timer in active_timers:
@@ -60,14 +66,14 @@ class TimerManager:
                     if not game_info or not game_info.get("game_running", False):
                         continue
 
-                    await self.check_screen_session_alive(game_id, game_info)
+                    # Screen session already checked above, skip duplicate check
 
                     new_remaining_time = max(0, remaining_time - 1)
 
                     if new_remaining_time == 3600:
                         if self.config and self.config.get("debug", False):
-                            print(f"[DEBUG] Timer for game ID {game_id} hit 1 hour. Checking for unplayed nations.")
-                        await self.alert_unplayed_nations(game_id, game_info)
+                            print(f"[DEBUG] Timer for game ID {game_id} hit 1 hour. Sending timer warning.")
+                        await self.send_timer_warning(game_id, game_info)
 
                     if new_remaining_time == 0:
                         if self.config and self.config.get("debug", False):
@@ -114,13 +120,12 @@ class TimerManager:
 
             await asyncio.sleep(1)
 
-    async def alert_unplayed_nations(self, game_id: int, game_info: dict):
+    async def send_timer_warning(self, game_id: int, game_info: dict):
         """
-        Alerts the lobby if there are any nations left totally unplayed when the timer hits 1 hour.
+        Sends a timer warning when the timer hits 1 hour remaining.
         
-        Queries the game status to identify unplayed nations (marked with "(-)") and sends
-        a Discord embed warning to the game's channel. Only sends alerts if there are actually
-        unplayed nations remaining.
+        Since a running timer means the turn hasn't processed yet, we simply alert
+        that there's 1 hour left without needing to check specific nation statuses.
         
         Args:
             game_id (int): The unique identifier for the game
@@ -131,43 +136,38 @@ class TimerManager:
             Silently handles cases where no channel is found or Discord API fails.
         """
         try:
-            raw_status = await self.nidhogg.query_game_status(game_id, self.db_instance)
-            lines = raw_status.split("\n")
-
-            unplayed_nations = []
-            for line in lines[6:]:
-                if "(-)" in line:
-                    nation = line.split(":")[1].split(",")[0].strip()
-                    unplayed_nations.append(nation)
-
-            if unplayed_nations:
-                channel_id = game_info.get("channel_id")
-                if not channel_id:
-                    if self.config and self.config.get("debug", False):
-                        print(f"[DEBUG] Game ID {game_id} has no associated channel ID.")
-                    return
-
-                channel = self.discord_bot.get_channel(int(channel_id))
-                if not channel:
-                    channel = await self.discord_bot.fetch_channel(int(channel_id))
-
-                embed = discord.Embed(
-                    title=f"⏳ Timer Warning for '{game_info['game_name']}'",
-                    description=(
-                        f"The timer is down to **1 hour**, and the following nations remain unplayed:\n\n"
-                        f"{', '.join(unplayed_nations)}\n\n"
-                        "Please take action to avoid being skipped!"
-                    ),
-                    color=discord.Color.orange()
-                )
-                embed.set_footer(text=f"Game ID: {game_id}")
-                embed.timestamp = discord.utils.utcnow()
-
-                await channel.send(embed=embed)
+            channel_id = game_info.get("channel_id")
+            if not channel_id:
                 if self.config and self.config.get("debug", False):
-                    print(f"[DEBUG] Alert sent to game ID {game_id} for unplayed nations: {', '.join(unplayed_nations)}")
+                    print(f"[DEBUG] Game ID {game_id} has no associated channel ID.")
+                return
+
+            channel = self.discord_bot.get_channel(int(channel_id))
+            if not channel:
+                channel = await self.discord_bot.fetch_channel(int(channel_id))
+
+            embed = discord.Embed(
+                title=f"⏳ Timer Warning for '{game_info['game_name']}'",
+                description=(
+                    f"⏰ **1 hour remaining** until the timer expires!\n\n"
+                    f"Make sure to finalize your turns to avoid being skipped."
+                ),
+                color=discord.Color.orange()
+            )
+            embed.set_footer(text=f"Game ID: {game_id}")
+            embed.timestamp = discord.utils.utcnow()
+
+            # Check if there's an associated role to ping
+            associated_role_id = game_info.get("role_id")
+            if associated_role_id:
+                role_mention = f"<@&{associated_role_id}>"
+                await channel.send(content=role_mention, embed=embed)
+            else:
+                await channel.send(embed=embed)
+            if self.config and self.config.get("debug", False):
+                print(f"[DEBUG] Timer warning sent to game ID {game_id}")
         except Exception as e:
-            print(f"[ERROR] Failed to alert unplayed nations for game ID {game_id}: {e}")
+            print(f"[ERROR] Failed to send timer warning for game ID {game_id}: {e}")
 
 
 

@@ -51,13 +51,13 @@ def register_info_commands(bot):
             current_turn = "Unknown"
             try:
                 from bifrost import bifrost
-                status_data = await bifrost.read_statusdump_file(game_id, bot.db_instance, bot.config)
-                if status_data:
-                    turn_num = status_data.get("turn", -1)
+                stats_data = await bifrost.read_stats_file(game_id, bot.db_instance, bot.config)
+                if stats_data:
+                    turn_num = stats_data.get("turn", -1)
                     if turn_num == -1:
                         current_turn = "Lobby"
                     else:
-                        current_turn = f"Turn {turn_num}"
+                        current_turn = f"Turn {turn_num + 1}"
             except Exception:
                 current_turn = "Unknown"
 
@@ -179,7 +179,7 @@ def register_info_commands(bot):
                     f"**Global Slots**: {game_info['global_slots']}\n"
                     f"**Research Random**: {'True' if game_info['research_random'] else 'False'}\n"
                     f"**Event Rarity**: {game_info['eventrarity']}\n"
-                    f"**Story Events**: {story_events_map[game_info['story_events']]}\n"
+                    f"**Story Events**: {story_events_value}\n"
                     f"**No Going AI**: {'True' if game_info['no_going_ai'] else 'False'}\n"
                     f"**Team Game**: {'True' if game_info['teamgame'] else 'False'}\n"
                     f"**Clustered Starts**: {'True' if game_info['clustered'] else 'False'}\n"

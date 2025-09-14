@@ -186,8 +186,15 @@ def register_timer_commands(bot):
 
             formatted_time = f"{time_value:g}"
             
+            # Format the new timer value for display
+            if game_info.get("game_type", "").lower() == "blitz":
+                new_timer_display = f"{new_remaining_time / 60:.1f} minutes"
+            else:
+                new_timer_display = f"{new_remaining_time / 3600:.1f} hours"
+            
             if time_value >= 0:
                 message = f"Timer for game ID {game_id} has been extended by {formatted_time} {time_unit}."
+                message += f"\n🕐 **New timer value: {new_timer_display}**"
                 
                 if used_chess_clock_time and not owner_exceeded_limit and not admin_exceeded_limit:
                     updated_time_remaining = await bot.db_instance.get_player_chess_clock_time(game_id, str(interaction.user.id))
@@ -204,9 +211,9 @@ def register_timer_commands(bot):
                 
                 await interaction.followup.send(message)
             else:
-                await interaction.followup.send(
-                    f"Timer for game ID {game_id} has been reduced by {abs(time_value):g} {time_unit}."
-                )
+                message = f"Timer for game ID {game_id} has been reduced by {abs(time_value):g} {time_unit}."
+                message += f"\n🕐 **New timer value: {new_timer_display}**"
+                await interaction.followup.send(message)
 
         except Exception as e:
             await interaction.followup.send(f"Failed to adjust the timer: {e}")
@@ -332,7 +339,7 @@ def register_timer_commands(bot):
             chess_clock_active = game_info.get('chess_clock_active', False)
             if chess_clock_active:
                 try:
-                    players = await bot.db_instance.get_players_in_game(game_id)
+                    players = await bot.db_instance.get_currently_claimed_players(game_id)
                     per_turn_bonus = game_info.get('chess_clock_per_turn_time', 0)
                     
                     if players:
@@ -532,8 +539,8 @@ def register_timer_commands(bot):
             for player in players_in_game:
                 player_id = player['player_id']
                 extensions = player['extensions']
-                member = guild.get_member(int(player_id))
-                display_name = member.display_name if member else f"Unknown (ID: {player_id})"
+                user = guild.get_member(int(player_id)) or await interaction.client.fetch_user(int(player_id))
+                display_name = user.display_name if user else f"Unknown (ID: {player_id})"
 
                 extensions_in_time_unit = (extensions or 0) // time_divisor
 

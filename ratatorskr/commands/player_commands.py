@@ -9,150 +9,13 @@ from typing import List, Dict, Optional
 import asyncio
 from bifrost import bifrost
 from ..decorators import require_bot_channel, require_game_channel, require_game_owner_or_admin, require_game_admin
+from ..utils import create_nations_dropdown
 
 
 def register_player_commands(bot):
     """Register all player-related commands to the bot's command tree."""
     
-    async def create_nations_dropdown(
-            interaction: discord.Interaction,
-            nations: List[str],
-            preselected_nations: List[str] = None) -> List[str]:
-        """Creates a paginated dropdown menu for nation selection and returns the selected nations."""
-        
-        if bot.config and bot.config.get("debug", False):
-            print(f"[DEBUG] create_nations_dropdown called with {len(nations)} nations, {len(preselected_nations or [])} preselected")
-        
-        if not nations:
-            await interaction.response.send_message("No nations available.", ephemeral=True)
-            return []
-        
-        ITEMS_PER_PAGE = 25
-        total_pages = (len(nations) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
-        preselected_set = set(preselected_nations or [])
-        
-        if bot.config and bot.config.get("debug", False):
-            print(f"[DEBUG] create_nations_dropdown: {total_pages} pages, {len(preselected_set)} preselected nations")
-        
-        class NationDropdown(discord.ui.Select):
-            def __init__(self, page_nations: List[str], page_num: int, total_pages: int):
-                max_selectable = min(len(page_nations), ITEMS_PER_PAGE)
-                super().__init__(
-                    placeholder=f"Choose nations (Page {page_num + 1}/{total_pages})...",
-                    min_values=0,
-                    max_values=max_selectable,
-                    options=[
-                        discord.SelectOption(
-                            label=nation,
-                            value=nation,
-                            default=nation in preselected_set
-                        )
-                        for nation in page_nations
-                    ],
-                )
-            
-            async def callback(self, interaction: discord.Interaction):
-                if not interaction.response.is_done():
-                    await interaction.response.defer()
-                
-                # Update selections for this page
-                for option in self.options:
-                    if option.value in self.values and option.value not in self.view.selected_nations:
-                        self.view.selected_nations.append(option.value)
-                    elif option.value not in self.values and option.value in self.view.selected_nations:
-                        self.view.selected_nations.remove(option.value)
-        
-        class PaginatedNationView(discord.ui.View):
-            def __init__(self):
-                super().__init__()
-                self.current_page = 0
-                self.selected_nations = list(preselected_set)
-                self.is_stopped = asyncio.Event()
-                self.confirmed = False
-                self.update_view()
-            
-            def update_view(self):
-                self.clear_items()
-                
-                start_idx = self.current_page * ITEMS_PER_PAGE
-                end_idx = min(start_idx + ITEMS_PER_PAGE, len(nations))
-                page_nations = nations[start_idx:end_idx]
-                
-                # Add dropdown
-                dropdown = NationDropdown(page_nations, self.current_page, total_pages)
-                self.add_item(dropdown)
-                
-                # Add navigation buttons
-                if total_pages > 1:
-                    if self.current_page > 0:
-                        prev_button = discord.ui.Button(label="← Previous", style=discord.ButtonStyle.secondary)
-                        prev_button.callback = self.prev_page
-                        self.add_item(prev_button)
-                    
-                    if self.current_page < total_pages - 1:
-                        next_button = discord.ui.Button(label="Next →", style=discord.ButtonStyle.secondary)
-                        next_button.callback = self.next_page
-                        self.add_item(next_button)
-                
-                # Add confirm button
-                confirm_button = discord.ui.Button(label="Confirm Selection", style=discord.ButtonStyle.green)
-                confirm_button.callback = self.confirm_selection
-                self.add_item(confirm_button)
-            
-            async def prev_page(self, interaction: discord.Interaction):
-                if self.current_page > 0:
-                    self.current_page -= 1
-                    self.update_view()
-                    await interaction.response.edit_message(
-                        content=f"Select nations (Page {self.current_page + 1}/{total_pages}). Currently selected: {len(self.selected_nations)} nations.",
-                        view=self
-                    )
-            
-            async def next_page(self, interaction: discord.Interaction):
-                if self.current_page < total_pages - 1:
-                    self.current_page += 1
-                    self.update_view()
-                    await interaction.response.edit_message(
-                        content=f"Select nations (Page {self.current_page + 1}/{total_pages}). Currently selected: {len(self.selected_nations)} nations.",
-                        view=self
-                    )
-            
-            async def confirm_selection(self, interaction: discord.Interaction):
-                self.confirmed = True
-                await interaction.response.defer()
-                self.stop()
-            
-            def stop(self):
-                super().stop()
-                self.is_stopped.set()
-            
-            async def wait(self, timeout=None):
-                try:
-                    await asyncio.wait_for(self.is_stopped.wait(), timeout=timeout)
-                except asyncio.TimeoutError:
-                    self.stop()
-                    raise
-        
-        view = PaginatedNationView()
-        if not interaction.response.is_done():
-            await interaction.response.defer(ephemeral=True)
-        
-        try:
-            await interaction.followup.send(
-                f"Select nations (Page 1/{total_pages}). Currently selected: {len(preselected_set)} nations.",
-                view=view,
-                ephemeral=True
-            )
-            await view.wait(timeout=300)
-            
-            if view.confirmed:
-                return view.selected_nations
-            else:
-                return []
-                
-        except asyncio.TimeoutError:
-            await interaction.followup.send("You did not make a selection in time.", ephemeral=True)
-            return []
+# Removed local create_nations_dropdown - now using shared version from utils
     
     @bot.tree.command(
         name="claim",
@@ -230,7 +93,7 @@ def register_player_commands(bot):
             if bot.config and bot.config.get("debug", False):
                 print(f"[DEBUG] claim_command calling create_nations_dropdown")
 
-            selected_nations = await create_nations_dropdown(interaction, valid_nations, current_nation_names)
+            selected_nations = await create_nations_dropdown(interaction, valid_nations, current_nation_names, bot.config and bot.config.get("debug", False))
             
             if bot.config and bot.config.get("debug", False):
                 print(f"[DEBUG] claim_command dropdown returned {len(selected_nations) if selected_nations else 0} selected nations: {selected_nations}")
@@ -744,7 +607,7 @@ def register_player_commands(bot):
 
             if played_but_not_finished:
                 unfinished_embed = discord.Embed(
-                    title="⚠️ Played But Not Finished",
+                    title="⚠️ Unfinished",
                     description="\n".join(played_but_not_finished),
                     color=discord.Color.gold()
                 )
@@ -909,6 +772,153 @@ def register_player_commands(bot):
                 print(f"Error in remove autocomplete: {e}")
             return []
 
+    @bot.tree.command(
+        name="get-turn-save",
+        description="Get your .2h and .trn files for the current turn via DM.",
+        guild=discord.Object(id=bot.guild_id)
+    )
+    @require_game_channel(bot.config)
+    async def get_turn_save_command(interaction: discord.Interaction):
+        """Sends the player's .2h and .trn files for the current turn via DM."""
+        await interaction.response.defer(ephemeral=True)
+        
+        game_id = await bot.db_instance.get_game_id_by_channel(interaction.channel_id)
+        if not game_id:
+            await interaction.followup.send("No game is associated with this channel.", ephemeral=True)
+            return
+        
+        game_info = await bot.db_instance.get_game_info(game_id)
+        if not game_info:
+            await interaction.followup.send("Game information not found in the database.", ephemeral=True)
+            return
+        
+        player_id = str(interaction.user.id)
+        
+        try:
+            # Check if player has claimed nations in this game
+            player_nations = await bot.db_instance.get_claimed_nations_by_player(game_id, player_id)
+            if not player_nations:
+                await interaction.followup.send("You don't have any nations claimed in this game.", ephemeral=True)
+                return
+            
+            # Use bifrost to create the save file
+            temp_zip_path = await bifrost.create_player_turn_save(game_id, player_nations, bot.db_instance, bot.config)
+            
+            if not temp_zip_path:
+                await interaction.followup.send("No save files found or error creating zip.", ephemeral=True)
+                return
+            
+            # Get turn info for filename
+            stats_data = await bifrost.read_stats_file(game_id, bot.db_instance, bot.config)
+            turn_num = (stats_data.get("turn", 0) + 1) if stats_data else 0
+            
+            zip_filename = bifrost.get_turn_save_filename(game_info.get("game_name"), turn_num)
+            
+            try:
+                # Send via DM
+                try:
+                    with open(temp_zip_path, 'rb') as f:
+                        discord_file = discord.File(f, filename=zip_filename)
+                        await interaction.user.send(
+                            f"📁 **Save files for {game_info.get('game_name')} - Turn {turn_num}**\n"
+                            f"Your .2h and .trn files are attached.",
+                            file=discord_file
+                        )
+                    
+                    await interaction.followup.send(
+                        f"✅ Save files sent to your DMs! ({zip_filename})",
+                        ephemeral=True
+                    )
+                    
+                except discord.Forbidden:
+                    await interaction.followup.send(
+                        "❌ Could not send DM. Please check your privacy settings allow DMs from server members.",
+                        ephemeral=True
+                    )
+                
+            finally:
+                # Clean up temporary file
+                try:
+                    import os
+                    os.unlink(temp_zip_path)
+                except:
+                    pass
+                    
+        except Exception as e:
+            await interaction.followup.send(f"Error retrieving save files: {e}", ephemeral=True)
+
+    @bot.tree.command(
+        name="get-all-turn-save",
+        description="Get all your .2h and .trn files from every turn via DM.",
+        guild=discord.Object(id=bot.guild_id)
+    )
+    @require_game_channel(bot.config)
+    async def get_all_turn_save_command(interaction: discord.Interaction):
+        """Sends the player's .2h and .trn files from all turns via DM."""
+        await interaction.response.defer(ephemeral=True)
+        
+        game_id = await bot.db_instance.get_game_id_by_channel(interaction.channel_id)
+        if not game_id:
+            await interaction.followup.send("No game is associated with this channel.", ephemeral=True)
+            return
+        
+        game_info = await bot.db_instance.get_game_info(game_id)
+        if not game_info:
+            await interaction.followup.send("Game information not found in the database.", ephemeral=True)
+            return
+        
+        player_id = str(interaction.user.id)
+        
+        try:
+            # Check if player has claimed nations in this game
+            player_nations = await bot.db_instance.get_claimed_nations_by_player(game_id, player_id)
+            if not player_nations:
+                await interaction.followup.send("You don't have any nations claimed in this game.", ephemeral=True)
+                return
+            
+            # Use bifrost to create the all turns save file
+            temp_zip_path = await bifrost.create_player_all_turns_save(game_id, player_nations, bot.db_instance, bot.config)
+            
+            if not temp_zip_path:
+                await interaction.followup.send("No save files found or error creating zip.", ephemeral=True)
+                return
+            
+            zip_filename = bifrost.get_all_turns_save_filename(game_info.get("game_name"))
+            
+            try:
+                # Send via DM
+                try:
+                    with open(temp_zip_path, 'rb') as f:
+                        discord_file = discord.File(f, filename=zip_filename)
+                        await interaction.user.send(
+                            f"📁 **All turn saves for {game_info.get('game_name')}**\n"
+                            f"Your .2h and .trn files from all turns are attached.\n"
+                            f"Files are organized by turn folders (turn_1, turn_2, etc.) with current turn in 'current' folder.",
+                            file=discord_file
+                        )
+                    
+                    await interaction.followup.send(
+                        f"✅ All turn saves sent to your DMs! ({zip_filename})",
+                        ephemeral=True
+                    )
+                    
+                except discord.Forbidden:
+                    await interaction.followup.send(
+                        "❌ Could not send DM. Please check your privacy settings allow DMs from server members.",
+                        ephemeral=True
+                    )
+                
+            finally:
+                # Clean up temporary file
+                try:
+                    import os
+                    os.unlink(temp_zip_path)
+                except:
+                    pass
+                    
+        except Exception as e:
+            await interaction.followup.send(f"Error retrieving all turn saves: {e}", ephemeral=True)
+
     return [
         claim_command,
         unclaim_command,
@@ -916,5 +926,7 @@ def register_player_commands(bot):
         pretenders_command,
         clear_claims_command,
         undone_command,
-        remove_command
+        remove_command,
+        get_turn_save_command,
+        get_all_turn_save_command
     ]

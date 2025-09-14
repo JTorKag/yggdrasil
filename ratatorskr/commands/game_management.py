@@ -10,12 +10,128 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from ..decorators import require_bot_channel, require_primary_bot_channel, require_game_channel, require_game_host_or_admin, require_game_owner_or_admin, require_game_admin
+from ..utils import create_dropdown
+
+# Global set to track games with pending selections
+pending_selections = set()
+
+
+def has_pending_selections(game_id: int) -> bool:
+    """Check if a game has pending map or mod selections."""
+    return game_id in pending_selections
 
 
 def register_game_management_commands(bot):
     """Register all game management commands to the bot's command tree."""
     if bot.config and bot.config.get("debug", False):
         print("[GAME_MGMT] Starting command registration...")
+    
+    # Local create_dropdown function removed - now using shared version from utils
+
+    @bot.tree.command(
+        name="select-map",
+        description="Select map for game.",
+        guild=discord.Object(id=bot.guild_id),
+    )
+    @require_game_channel(bot.config)
+    @require_game_owner_or_admin(bot.config)
+    async def select_map_command(interaction: discord.Interaction):
+        game_id = await bot.db_instance.get_game_id_by_channel(interaction.channel.id)
+        if game_id is None:
+            await interaction.response.send_message("This channel is not associated with any active game.", ephemeral=True)
+            return
+
+        game_info = await bot.db_instance.get_game_info(game_id)
+        if game_info and game_info.get("game_started"):
+            await interaction.response.send_message("The game has already started. You cannot change the map.", ephemeral=True)
+            return
+
+        # Check if there's already a pending selection for this game
+        if game_id in pending_selections:
+            await interaction.response.send_message("There is already a pending map or mod selection for this game. Please complete or cancel that selection first.", ephemeral=True)
+            return
+
+        current_map = await bot.db_instance.get_map(game_id)
+
+        maps = bifrost.get_maps(config=bot.config)
+
+        default_maps = [
+            {"name": "Vanilla Small 10", "location": "vanilla_10", "yggemoji": ":dom6:", "yggdescr": "Small Lakes & One Cave"},
+            {"name": "Vanilla Medium 15", "location": "vanilla_15", "yggemoji": ":dom6:", "yggdescr": "Small Lakes & One Cave"},
+            {"name": "Vanilla Large 20", "location": "vanilla_20", "yggemoji": ":dom6:", "yggdescr": "Small Lakes & One Cave"},
+            {"name": "Vanilla Enormous 25", "location": "vanilla_25", "yggemoji": ":dom6:", "yggdescr": "Small Lakes & One Cave"},
+        ]
+        maps = default_maps + maps
+
+        # Mark this game as having a pending selection
+        pending_selections.add(game_id)
+        
+        try:
+            selected_map, map_location, confirmed = await create_dropdown(
+                interaction, maps, "map", multi_select=False, preselected_values=[current_map] if current_map else [], timeout=180
+            )
+
+            if confirmed and selected_map:
+                await bot.db_instance.update_map(game_id, map_location[0])
+                await interaction.followup.send(f"Map updated to: {', '.join(selected_map)}", ephemeral=True)
+            elif confirmed:
+                await interaction.followup.send("No selection was made.", ephemeral=True)
+            else:
+                await interaction.followup.send("Selection timed out. No changes were applied.", ephemeral=True)
+        finally:
+            # Always remove the pending selection when done
+            pending_selections.discard(game_id)
+
+    @bot.tree.command(
+        name="select-mods",
+        description="Select mods for game.",
+        guild=discord.Object(id=bot.guild_id),
+    )
+    @require_game_channel(bot.config)
+    @require_game_owner_or_admin(bot.config)
+    async def select_mods_command(interaction: discord.Interaction):
+        game_id = await bot.db_instance.get_game_id_by_channel(interaction.channel.id)
+        if game_id is None:
+            await interaction.response.send_message("This channel is not associated with any active game.", ephemeral=True)
+            return
+
+        game_info = await bot.db_instance.get_game_info(game_id)
+        if game_info:
+            if game_info.get("game_started"):
+                await interaction.response.send_message("The game has already started. You cannot change the mods.", ephemeral=True)
+                return
+            if game_info.get("game_running"):
+                await interaction.response.send_message("The game is currently running. You cannot change the mods.", ephemeral=True)
+                return
+
+        # Check if there's already a pending selection for this game
+        if game_id in pending_selections:
+            await interaction.response.send_message("There is already a pending map or mod selection for this game. Please complete or cancel that selection first.", ephemeral=True)
+            return
+
+        current_mods = await bot.db_instance.get_mods(game_id)
+
+        mods = bifrost.get_mods(config=bot.config)
+
+        # Mark this game as having a pending selection
+        pending_selections.add(game_id)
+        
+        try:
+            selected_mods, mods_locations, confirmed = await create_dropdown(
+                interaction, mods, "mod", multi_select=True, preselected_values=current_mods, timeout=180
+            )
+
+            if confirmed and selected_mods:
+                await bot.db_instance.update_mods(game_id, mods_locations)
+                await interaction.followup.send(f"Mods updated to: {', '.join(selected_mods)}", ephemeral=True)
+            elif confirmed:
+                await bot.db_instance.update_mods(game_id, [])
+                await interaction.followup.send("No mods selected. All mods have been removed.", ephemeral=True)
+            else:
+                await interaction.followup.send("Selection timed out. No changes were applied.", ephemeral=True)
+        finally:
+            # Always remove the pending selection when done
+            pending_selections.discard(game_id)
     
     if bot.config and bot.config.get("debug", False):
         print("[GAME_MGMT] Registering new-game command...")
@@ -467,6 +583,13 @@ def register_game_management_commands(bot):
         if not game_info:
             await interaction.followup.send("Game information not found.")
             return
+        
+        # Reject if there are pending map/mod selections
+        if has_pending_selections(game_id):
+            await interaction.followup.send("Cannot launch game while there are pending map or mod selections. Please complete or cancel any pending selections first.")
+            print(f"\nFailed to launch game. Pending selections in {interaction.channel}.")
+            return
+        
         # Check if the game is active
         if not game_info["game_active"]:
             await interaction.followup.send("This game is not marked as active and cannot be launched.")
@@ -528,6 +651,12 @@ def register_game_management_commands(bot):
         if not game_info["game_running"]:
             await interaction.followup.send("Game is not running. Please use /launch.")
             print(f"\nFailed to start game. Game not running in {interaction.channel}.")
+            return
+
+        # Reject if there are pending map/mod selections
+        if has_pending_selections(game_id):
+            await interaction.followup.send("Cannot start game while there are pending map or mod selections. Please complete or cancel any pending selections first.")
+            print(f"\nFailed to start game. Pending selections in {interaction.channel}.")
             return
 
         # Step 1: Fetch nations with submitted pretenders (.2h files)
@@ -858,17 +987,17 @@ def register_game_management_commands(bot):
     @require_game_channel(bot.config)
     @require_game_owner_or_admin(bot.config)
     async def kill_command(interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer()
         game_id = await bot.db_instance.get_game_id_by_channel(interaction.channel_id)
         if not game_id:
-            await interaction.followup.send("No game is associated with this channel.", ephemeral=True)
+            await interaction.followup.send("No game is associated with this channel.")
             return
         
         try:
             await bot.nidhogg.kill_game_lobby(game_id, bot.db_instance)
-            await interaction.followup.send(f"Game process for ID {game_id} has been killed.", ephemeral=True)
+            await interaction.followup.send(f"Game process for ID {game_id} has been killed.")
         except Exception as e:
-            await interaction.followup.send(f"Failed to kill game process: {e}", ephemeral=True)
+            await interaction.followup.send(f"Failed to kill game process: {e}")
 
     @bot.tree.command(
         name="force-host",
@@ -1201,6 +1330,8 @@ def register_game_management_commands(bot):
     if bot.config and bot.config.get("debug", False):
         print("[GAME_MGMT] All commands registered, returning command list...")
     return [
+        select_map_command,
+        select_mods_command,
         new_game_command,
         edit_game_command, 
         launch_command,

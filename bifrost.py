@@ -1116,3 +1116,157 @@ class bifrost:
         except Exception as e:
             print(f"Error deleting file {filepath}: {e}")
             return False
+
+    @staticmethod  
+    async def create_player_turn_save(game_id: int, player_nations: List[str], db_instance, config) -> Optional[str]:
+        """
+        Creates a zip file containing the player's .2h and .trn files for the current turn.
+        
+        Args:
+            game_id: The game ID
+            player_nations: List of nation names the player has claimed
+            db_instance: Database instance  
+            config: Configuration dictionary
+            
+        Returns:
+            Path to the temporary zip file, or None if no files found/error
+        """
+        try:
+            import tempfile
+            
+            # Get game info
+            game_info = await db_instance.get_game_info(game_id)
+            if not game_info:
+                return None
+                
+            # Get current turn number
+            stats_data = await bifrost.read_stats_file(game_id, db_instance, config)
+            if not stats_data:
+                return None
+                
+            turn_num = stats_data.get("turn", -1)
+            if turn_num < 1:
+                return None
+                
+            dom_data_folder = config.get("dom_data_folder", ".")
+            game_name = game_info.get("game_name")
+            savedgames_path = Path(dom_data_folder) / "savedgames" / game_name
+            
+            if not savedgames_path.exists():
+                return None
+                
+            # Find player's files
+            files_to_zip = []
+            
+            for nation in player_nations:
+                # Look for .2h file (pretender file)
+                pretender_files = list(savedgames_path.glob(f"*{nation}*.2h"))
+                files_to_zip.extend(pretender_files)
+                
+                # Look for .trn file (turn file)  
+                turn_files = list(savedgames_path.glob(f"*{nation}*.trn"))
+                files_to_zip.extend(turn_files)
+            
+            if not files_to_zip:
+                return None
+                
+            # Create temporary zip file
+            temp_zip = tempfile.NamedTemporaryFile(suffix='.zip', delete=False)
+            temp_zip.close()
+            
+            with zipfile.ZipFile(temp_zip.name, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                for file_path in files_to_zip:
+                    if file_path.exists():
+                        zipf.write(file_path, file_path.name)
+            
+            return temp_zip.name
+            
+        except Exception as e:
+            print(f"Error creating player turn save: {e}")
+            return None
+
+    @staticmethod
+    def get_turn_save_filename(game_name: str, turn_num: int) -> str:
+        """Generate filename for turn save zip."""
+        return f"{game_name}_Turn_{turn_num}_Save.zip"
+
+    @staticmethod  
+    async def create_player_all_turns_save(game_id: int, player_nations: List[str], db_instance, config) -> Optional[str]:
+        """
+        Creates a zip file containing the player's .2h and .trn files for all turns.
+        Looks in backup folders for historical turns and savedgames for current turn.
+        
+        Args:
+            game_id: The game ID
+            player_nations: List of nation names the player has claimed
+            db_instance: Database instance  
+            config: Configuration dictionary
+            
+        Returns:
+            Path to the temporary zip file, or None if no files found/error
+        """
+        try:
+            import tempfile
+            
+            # Get game info
+            game_info = await db_instance.get_game_info(game_id)
+            if not game_info:
+                return None
+                
+            dom_data_folder = config.get("dom_data_folder", ".")
+            backup_data_folder = config.get("backup_data_folder", ".")
+            game_name = game_info.get("game_name")
+            
+            savedgames_path = Path(dom_data_folder) / "savedgames" / game_name
+            backup_path = Path(backup_data_folder) / str(game_id)
+            
+            files_to_zip = []
+            
+            # Get files from backup folders (historical turns)
+            if backup_path.exists():
+                for turn_folder in sorted(backup_path.glob("turn_*")):
+                    if turn_folder.is_dir():
+                        for nation in player_nations:
+                            # Look for .2h and .trn files in this turn folder
+                            pretender_files = list(turn_folder.glob(f"*{nation}*.2h"))
+                            turn_files = list(turn_folder.glob(f"*{nation}*.trn"))
+                            
+                            for file_path in pretender_files + turn_files:
+                                if file_path.exists():
+                                    # Create archive path with turn folder name
+                                    archive_name = f"{turn_folder.name}/{file_path.name}"
+                                    files_to_zip.append((file_path, archive_name))
+            
+            # Get current turn files from savedgames (if exists)
+            if savedgames_path.exists():
+                for nation in player_nations:
+                    pretender_files = list(savedgames_path.glob(f"*{nation}*.2h"))
+                    turn_files = list(savedgames_path.glob(f"*{nation}*.trn"))
+                    
+                    for file_path in pretender_files + turn_files:
+                        if file_path.exists():
+                            # Put current turn files in "current" folder
+                            archive_name = f"current/{file_path.name}"
+                            files_to_zip.append((file_path, archive_name))
+            
+            if not files_to_zip:
+                return None
+                
+            # Create temporary zip file
+            temp_zip = tempfile.NamedTemporaryFile(suffix='.zip', delete=False)
+            temp_zip.close()
+            
+            with zipfile.ZipFile(temp_zip.name, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                for file_path, archive_name in files_to_zip:
+                    zipf.write(file_path, archive_name)
+            
+            return temp_zip.name
+            
+        except Exception as e:
+            print(f"Error creating player all turns save: {e}")
+            return None
+
+    @staticmethod
+    def get_all_turns_save_filename(game_name: str) -> str:
+        """Generate filename for all turns save zip."""
+        return f"{game_name}_All_Turns_Save.zip"

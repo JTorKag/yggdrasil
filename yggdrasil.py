@@ -82,9 +82,7 @@ async def shutdown(discordBot, db_instance, observer, shutdown_signal, timer_man
     
     try:
         print("[INFO] Cleaning up running game screen sessions...")
-        from nidhogg import nidhogg
-        nidhogg_instance = nidhogg()
-        
+        # Use the same nidhogg class that's used throughout the application
         active_games = await db_instance.get_active_games()
         if active_games:
             print(f"[INFO] Found {len(active_games)} active games to clean up")
@@ -93,10 +91,13 @@ async def shutdown(discordBot, db_instance, observer, shutdown_signal, timer_man
                 game_name = game.get("game_name", f"game_{game_id}")
                 
                 try:
-                    await nidhogg_instance.kill_game_lobby(game_id, db_instance)
-                    print(f"[INFO] Killed game {game_name} (ID: {game_id})")
+                    print(f"[DEBUG] Attempting to kill game {game_name} (ID: {game_id})")
+                    await nidhogg.kill_game_lobby(game_id, db_instance)
+                    print(f"[INFO] Successfully killed game {game_name} (ID: {game_id})")
                 except Exception as e:
                     print(f"[ERROR] Failed to kill game {game_name}: {e}")
+                    import traceback
+                    print(f"[ERROR] Traceback: {traceback.format_exc()}")
         else:
             print("[INFO] No active games found to clean up")
     except Exception as e:

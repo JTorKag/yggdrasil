@@ -191,6 +191,8 @@ Commands are organized by function and include permission restrictions to ensure
 - `/clear-claims` - Remove all nation claims in game *[Game Channel, Owner/Admin]*
 - `/pretenders` - View all submitted pretender files *[Game Channel]*
 - `/remove` - Remove pretender files from lobby *[Game Channel, Owner/Admin]*
+- `/get-turn-save` - Get your .2h and .trn files for the current turn via DM *[Game Channel]*
+- `/get-turn-all-saves` - Get all your .2h and .trn files from all turns via DM *[Game Channel]*
 
 #### **Timer & Turn Management**
 - `/timer` - Check remaining time on current turn *[Game Channel]*
