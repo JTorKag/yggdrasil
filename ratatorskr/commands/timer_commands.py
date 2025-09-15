@@ -185,16 +185,24 @@ def register_timer_commands(bot):
             await bot.db_instance.update_timer(game_id, new_remaining_time, timer_info["timer_running"])
 
             formatted_time = f"{time_value:g}"
-            
-            # Format the new timer value for display
-            if game_info.get("game_type", "").lower() == "blitz":
-                new_timer_display = f"{new_remaining_time / 60:.1f} minutes"
+
+            # Format the exact time remaining using descriptive_time_breakdown
+            remaining_readable = descriptive_time_breakdown(new_remaining_time)
+
+            # Calculate the Discord timestamp for next turn
+            if new_remaining_time and timer_info["timer_running"]:
+                from datetime import datetime, timezone, timedelta
+                current_time = datetime.now(timezone.utc)
+                future_time = current_time + timedelta(seconds=new_remaining_time)
+                discord_timestamp = f"<t:{int(future_time.timestamp())}:F>"
+                next_turn_text = f"**Next Turn**: {discord_timestamp}"
             else:
-                new_timer_display = f"{new_remaining_time / 3600:.1f} hours"
-            
+                next_turn_text = "**Next Turn**: Timer is paused"
+
             if time_value >= 0:
                 message = f"Timer for game ID {game_id} has been extended by {formatted_time} {time_unit}."
-                message += f"\n🕐 **New timer value: {new_timer_display}**"
+                message += f"\n🕐 **Time Remaining**: {remaining_readable}"
+                message += f"\n{next_turn_text}"
                 
                 if used_chess_clock_time and not owner_exceeded_limit and not admin_exceeded_limit:
                     updated_time_remaining = await bot.db_instance.get_player_chess_clock_time(game_id, str(interaction.user.id))
@@ -212,7 +220,8 @@ def register_timer_commands(bot):
                 await interaction.followup.send(message)
             else:
                 message = f"Timer for game ID {game_id} has been reduced by {abs(time_value):g} {time_unit}."
-                message += f"\n🕐 **New timer value: {new_timer_display}**"
+                message += f"\n🕐 **Time Remaining**: {remaining_readable}"
+                message += f"\n{next_turn_text}"
                 await interaction.followup.send(message)
 
         except Exception as e:

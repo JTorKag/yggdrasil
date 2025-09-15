@@ -8,12 +8,14 @@ User=YOUR_USERNAME
 Group=YOUR_USERNAME
 WorkingDirectory=/path/to/yggdrasil
 ExecStart=/usr/bin/screen -DmS ygg /path/to/yggdrasil/venv/bin/python /path/to/yggdrasil/yggdrasil.py
+ExecStop=/bin/bash -c 'screen -S ygg -X stuff "exit^M"'
+TimeoutStopSec=30
 Restart=on-failure
 PrivateTmp=false
 ProtectSystem=false
 ProtectHome=false
 ReadWritePaths=/tmp
-KillMode=control-group
+KillMode=none
 
 [Install]
 WantedBy=multi-user.target

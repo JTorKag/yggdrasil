@@ -13,6 +13,12 @@ class nidhogg:
     _config = bifrost.load_config()
     dominions_folder = Path(_config.get("dominions_folder"))
 
+    @classmethod
+    def update_config(cls, config):
+        """Update the config and dominions_folder path."""
+        cls._config = config
+        cls.dominions_folder = Path(config.get("dominions_folder"))
+
     @staticmethod
     def set_executable_permission(file_path: str):
         """

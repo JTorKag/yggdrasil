@@ -136,14 +136,24 @@ async def main():
     if is_wsl():
         if config and config.get("debug", False):
             print("[MAIN] WSL detected, using dev environment")
-        os.environ["DOM6_CONF"] = config["dev_eviron"]
+        os.environ["DOM6_CONF"] = config["dev_dom_data_folder"]
+        config["dominions_folder"] = config["dev_dominions"]
+        config["dom_data_folder"] = config["dev_dom_data_folder"]
+        config["backup_data_folder"] = config["dev_data_backup"]
+        # Update nidhogg's config to use dev paths
+        nidhogg.update_config(config)
     else:
         if config and config.get("debug", False):
             print("[MAIN] Linux system, using production environment")
         os.environ["DOM6_CONF"] = config["dom_data_folder"]
     if config and config.get("debug", False):
         print("[MAIN] Environment variables set")
-    
+
+    # Ensure required directories exist
+    backup_path = Path(config.get("backup_data_folder"))
+    if not backup_path.exists():
+        backup_path.mkdir(parents=True, exist_ok=True)
+        print(f"[MAIN] Created backup directory: {backup_path}")
 
     if config and config.get("debug", False):
         print("[MAIN] Setting up file permissions...")
@@ -170,23 +180,21 @@ async def main():
     await db_instance.setup_db()
     if config and config.get("debug", False):
         print("[DB] Database tables initialized")
-    else:
-        print("Database setup completed successfully.")
-    
-    if config and config.get("debug", False):
-        print("[MAIN] Initializing Discord bot...")
+
+    print("[MAIN] Initializing Discord bot...")
     discordBot = initialize_bot(config, db_instance, bot_ready_signal)
+    print("[MAIN] Discord bot object created")
     if config and config.get("debug", False):
         print("[MAIN] Discord bot initialized")
 
-    if config and config.get("debug", False):
-        print("[MAIN] Creating TimerManager...")
+    print("[MAIN] Creating TimerManager...")
     timer_manager = TimerManager(
         db_instance=db_instance,
         config=config,
         nidhogg=nidhogg,
         discord_bot=discordBot
     )
+    print("[MAIN] TimerManager created successfully")
     if config and config.get("debug", False):
         print("[MAIN] TimerManager created")
 

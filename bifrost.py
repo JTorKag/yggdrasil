@@ -68,12 +68,14 @@ class bifrost:
             'max_active_games': int,
             'dom_data_folder': str,
             'backup_data_folder': str,
-            'dominions_folder': str,
-            'dev_eviron': str
+            'dominions_folder': str
         }
-        
+
         optional_fields = {
-            'server_host': str
+            'server_host': str,
+            'dev_dominions': str,
+            'dev_dom_data_folder': str,
+            'dev_data_backup': str
         }
         
         discord_id_fields = {'guild_id', 'category_id', 'game_admin', 'game_host'}
@@ -100,15 +102,7 @@ class bifrost:
             if field in config and not isinstance(config[field], expected_type):
                 raise ValueError(f"Configuration field '{field}' must be of type {expected_type.__name__}, got {type(config[field]).__name__}")
         
-        path_fields = ['dom_data_folder', 'backup_data_folder', 'dominions_folder']
-        for field in path_fields:
-            path = Path(config[field])
-            if not path.exists():
-                print(f"Warning: Path does not exist: {config[field]} (will be created if needed)")
-        
-        dom_binary = Path(config['dominions_folder']) / 'dom6_amd64'
-        if not dom_binary.exists():
-            raise ValueError(f"Dominions binary not found: {dom_binary}")
+        # Path validation removed - will be handled by yggdrasil.py after WSL detection
         
         if not config['primary_bot_channel']:
             raise ValueError("primary_bot_channel cannot be empty")
@@ -154,18 +148,21 @@ class bifrost:
     @staticmethod
     def parse_ygg_metadata(file_path):
         """
-        Parse a file to extract #yggemoji and #yggdescr metadata.
+        Parse a file to extract #yggemoji, #yggdescr, and #descr metadata.
 
         Args:
             file_path (str): The path to the file to parse.
 
         Returns:
             dict: A dictionary containing 'yggemoji' and 'yggdescr' values, if found.
+                  If #yggdescr is not found but #descr is, uses #descr as fallback.
         """
         metadata = {
             "yggemoji": "::",
             "yggdescr": ""
         }
+
+        descr_fallback = ""  # Store #descr as fallback if no #yggdescr
 
         try:
             with open(file_path, 'r', encoding='utf-8') as file:
@@ -177,10 +174,19 @@ class bifrost:
                     elif line.startswith("#yggdescr"):
                         description = line[len("#yggdescr"):].strip().strip('"').strip("'")
                         metadata["yggdescr"] = description
+                    elif line.startswith("#descr") and not line.startswith("#description"):
+                        # Capture standard Dominions #descr tag as fallback
+                        description = line[len("#descr"):].strip().strip('"').strip("'")
+                        descr_fallback = description
+
         except FileNotFoundError:
             print(f"File not found: {file_path}")
         except Exception as e:
             print(f"Error parsing file {file_path}: {e}")
+
+        # Use #descr as fallback if no #yggdescr was found
+        if not metadata["yggdescr"] and descr_fallback:
+            metadata["yggdescr"] = descr_fallback
 
         return metadata
 
@@ -845,7 +851,11 @@ class bifrost:
             print("Error: 'dom_data_folder' not found in the config.")
             return
 
-
+        # Create the directory if it doesn't exist
+        dom_data_path = Path(dom_data_folder)
+        if not dom_data_path.exists():
+            dom_data_path.mkdir(parents=True, exist_ok=True)
+            print(f"[bifrost] Created directory: {dom_data_folder}")
 
         observer = bifrost.watch_folder(dom_data_folder)
 

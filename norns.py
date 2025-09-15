@@ -123,14 +123,13 @@ class TimerManager:
     async def send_timer_warning(self, game_id: int, game_info: dict):
         """
         Sends a timer warning when the timer hits 1 hour remaining.
-        
-        Since a running timer means the turn hasn't processed yet, we simply alert
-        that there's 1 hour left without needing to check specific nation statuses.
-        
+
+        Includes the full undone information showing which nations haven't submitted.
+
         Args:
             game_id (int): The unique identifier for the game
             game_info (dict): Game information containing channel_id and game_name
-            
+
         Note:
             Requires the game to have an associated Discord channel_id in game_info.
             Silently handles cases where no channel is found or Discord API fails.
@@ -146,7 +145,10 @@ class TimerManager:
             if not channel:
                 channel = await self.discord_bot.fetch_channel(int(channel_id))
 
-            embed = discord.Embed(
+            embeds = []
+
+            # Main warning embed
+            warning_embed = discord.Embed(
                 title=f"⏳ Timer Warning for '{game_info['game_name']}'",
                 description=(
                     f"⏰ **1 hour remaining** until the timer expires!\n\n"
@@ -154,16 +156,109 @@ class TimerManager:
                 ),
                 color=discord.Color.orange()
             )
-            embed.set_footer(text=f"Game ID: {game_id}")
-            embed.timestamp = discord.utils.utcnow()
+            warning_embed.set_footer(text=f"Game ID: {game_id}")
+            warning_embed.timestamp = discord.utils.utcnow()
+            embeds.append(warning_embed)
+
+            # Try to get undone information
+            try:
+                raw_status = await self.nidhogg.query_game_status(game_id, self.db_instance)
+                timer_table = await self.db_instance.get_game_timer(game_id)
+                lines = raw_status.split("\n")
+
+                # Get turn number from status
+                turn = lines[4].split(":")[1].strip() if len(lines) > 4 else "?"
+                time_left = timer_table["remaining_time"] if timer_table else 3600
+                timer_running = timer_table["timer_running"] if timer_table else True
+
+                # Helper function for time breakdown
+                def descriptive_time_breakdown(seconds: int) -> str:
+                    """Format a duration in seconds into a descriptive breakdown."""
+                    days, seconds = divmod(seconds, 86400)
+                    hours, seconds = divmod(seconds, 3600)
+                    minutes, seconds = divmod(seconds, 60)
+
+                    parts = []
+                    if days > 0:
+                        parts.append(f"{days} day{'s' if days != 1 else ''}")
+                    if hours > 0:
+                        parts.append(f"{hours} hour{'s' if hours != 1 else ''}")
+                    if minutes > 0:
+                        parts.append(f"{minutes} minute{'s' if minutes != 1 else ''}")
+                    if seconds > 0:
+                        parts.append(f"{seconds} second{'s' if seconds != 1 else ''}")
+
+                    return ", ".join(parts) if parts else "0 seconds"
+
+                # Add timer info embed like /undone does
+                from datetime import datetime, timezone, timedelta
+                current_time = datetime.now(timezone.utc)
+                future_time = current_time + timedelta(seconds=time_left)
+                discord_timestamp = f"<t:{int(future_time.timestamp())}:F>"
+                timer_status = "Running" if timer_running else "Paused"
+
+                game_info_embed = discord.Embed(
+                    title=f"Turn {turn}",
+                    description=(
+                        f"Next turn:\n{discord_timestamp} in {descriptive_time_breakdown(time_left)}\n"
+                        f"**Timer Status:** {timer_status}"
+                    ),
+                    color=discord.Color.blue()
+                )
+                embeds.append(game_info_embed)
+
+                played_nations = []
+                played_but_not_finished = []
+                undone_nations = []
+
+                for line in lines[6:] if len(lines) > 6 else []:
+                    if "played, but not finished" in line:
+                        nation = line.split(":")[1].split(",")[0].strip()
+                        played_but_not_finished.append(nation)
+                    elif "played" in line:
+                        nation = line.split(":")[1].split(",")[0].strip()
+                        played_nations.append(nation)
+                    elif "(-)" in line:
+                        nation = line.split(":")[1].split(",")[0].strip()
+                        undone_nations.append(nation)
+
+                # Add the same embeds as /undone command
+                if played_nations:
+                    played_embed = discord.Embed(
+                        title="✅ Played Nations",
+                        description="\n".join(played_nations),
+                        color=discord.Color.green()
+                    )
+                    embeds.append(played_embed)
+
+                if played_but_not_finished:
+                    unfinished_embed = discord.Embed(
+                        title="⚠️ Unfinished",
+                        description="\n".join(played_but_not_finished),
+                        color=discord.Color.gold()
+                    )
+                    embeds.append(unfinished_embed)
+
+                if undone_nations:
+                    undone_embed = discord.Embed(
+                        title="❌ Undone Nations",
+                        description="\n".join(undone_nations),
+                        color=discord.Color.red()
+                    )
+                    embeds.append(undone_embed)
+
+            except Exception as status_error:
+                # If we can't get the status, just send the warning without undone info
+                if self.config and self.config.get("debug", False):
+                    print(f"[DEBUG] Failed to get undone status for timer warning: {status_error}")
 
             # Check if there's an associated role to ping
             associated_role_id = game_info.get("role_id")
             if associated_role_id:
                 role_mention = f"<@&{associated_role_id}>"
-                await channel.send(content=role_mention, embed=embed)
+                await channel.send(content=role_mention, embeds=embeds)
             else:
-                await channel.send(embed=embed)
+                await channel.send(embeds=embeds)
             if self.config and self.config.get("debug", False):
                 print(f"[DEBUG] Timer warning sent to game ID {game_id}")
         except Exception as e:
