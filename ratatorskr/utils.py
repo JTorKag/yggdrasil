@@ -69,7 +69,7 @@ async def create_dropdown(
         multi_select: bool = True,
         preselected_values: List[str] = None,
         timeout: int = 180) -> tuple[List[str], List[str], bool]:
-        """Creates a dropdown menu with confirm button and returns the names, locations, and confirmation status of selected options."""
+        """Creates a paginated dropdown menu with confirm button and returns the names, locations, and confirmation status of selected options."""
         def resolve_emoji(emoji_code: str) -> Optional[discord.PartialEmoji]:
             """Resolves a custom emoji from its code."""
             if emoji_code and emoji_code.startswith(":") and emoji_code.endswith(":"):
@@ -84,12 +84,17 @@ async def create_dropdown(
             await interaction.response.send_message("No options available.", ephemeral=True)
             return [], [], False
 
+        ITEMS_PER_PAGE = 25
+        total_pages = (len(options) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+        preselected_set = set(preselected_values or [])
+
         class Dropdown(discord.ui.Select):
-            def __init__(self, prompt_type: str):
+            def __init__(self, page_options: List[Dict[str, str]], page_num: int, total_pages: int):
+                max_selectable = min(len(page_options), ITEMS_PER_PAGE) if multi_select else 1
                 super().__init__(
-                    placeholder=f"Choose {'one or more' if multi_select else 'one'} {prompt_type}{'s' if multi_select else ''}...",
+                    placeholder=f"Choose {'one or more' if multi_select else 'one'} {prompt_type}{'s' if multi_select else ''}... (Page {page_num + 1}/{total_pages})",
                     min_values=0 if multi_select else 1,
-                    max_values=len(options) if multi_select else 1,
+                    max_values=max_selectable,
                     options=[
                         discord.SelectOption(
                             label=option["name"],
@@ -97,44 +102,96 @@ async def create_dropdown(
                             description=option.get("yggdescr", None),
                             emoji=resolve_emoji(option.get("yggemoji")),
                             default=(
-                                option["location"].split('/', 1)[-1] in (preselected_values or [])
+                                option["location"].split('/', 1)[-1] in preselected_set
                                 if prompt_type == "map"
-                                else option["location"] in (preselected_values or [])
+                                else option["location"] in preselected_set
                             )
                         )
-                        for option in options
+                        for option in page_options
                     ],
                 )
 
             async def callback(self, interaction: discord.Interaction):
                 if not interaction.response.is_done():
                     await interaction.response.defer()
-                self.view.selected_names = [o.label for o in self.options if o.value in self.values]
-                self.view.selected_locations = [
-                    v.split('/', 1)[-1] if prompt_type == "map" else v for v in self.values
-                ]
+                self.view.update_selection(self.values, [o.label for o in self.options if o.value in self.values])
 
         class DropdownView(discord.ui.View):
-            def __init__(self, prompt_type: str):
+            def __init__(self, options: List[Dict[str, str]], total_pages: int):
                 super().__init__()
-                self.dropdown = Dropdown(prompt_type)
-                self.add_item(self.dropdown)
+                self.options = options
+                self.total_pages = total_pages
+                self.current_page = 0
+                self.selected_values = set(preselected_values or [])
                 self.selected_names = []
                 self.selected_locations = []
                 self.is_stopped = asyncio.Event()
                 self.confirmed = False
                 
-                # Add confirm button
+                self.update_page()
+
+            def update_selection(self, new_values: List[str], new_names: List[str]):
+                # Remove all options from the current page from selection
+                start_idx = self.current_page * ITEMS_PER_PAGE
+                end_idx = min(start_idx + ITEMS_PER_PAGE, len(self.options))
+                current_page_values = set(opt["location"] for opt in self.options[start_idx:end_idx])
+                
+                if multi_select:
+                    self.selected_values = self.selected_values - current_page_values
+                    self.selected_values.update(new_values)
+                else:
+                    self.selected_values = set(new_values)
+
+            def update_page(self):
+                self.clear_items()
+                
+                start_idx = self.current_page * ITEMS_PER_PAGE
+                end_idx = min(start_idx + ITEMS_PER_PAGE, len(self.options))
+                page_options = self.options[start_idx:end_idx]
+                
+                # Add dropdown
+                dropdown = Dropdown(page_options, self.current_page, self.total_pages)
+                self.add_item(dropdown)
+                
+                # Add navigation buttons if multiple pages
+                if self.total_pages > 1:
+                    # Previous page button
+                    prev_button = discord.ui.Button(label="Previous", style=discord.ButtonStyle.secondary, disabled=self.current_page == 0)
+                    prev_button.callback = self.previous_page
+                    self.add_item(prev_button)
+                    
+                    # Next page button
+                    next_button = discord.ui.Button(label="Next", style=discord.ButtonStyle.secondary, disabled=self.current_page >= self.total_pages - 1)
+                    next_button.callback = self.next_page
+                    self.add_item(next_button)
+                
+                # Confirm button
                 confirm_button = discord.ui.Button(label="Confirm Selection", style=discord.ButtonStyle.green)
                 confirm_button.callback = self.confirm_selection
                 self.add_item(confirm_button)
 
+            async def previous_page(self, interaction: discord.Interaction):
+                if self.current_page > 0:
+                    self.current_page -= 1
+                    self.update_page()
+                    await interaction.response.edit_message(view=self)
+
+            async def next_page(self, interaction: discord.Interaction):
+                if self.current_page < self.total_pages - 1:
+                    self.current_page += 1
+                    self.update_page()
+                    await interaction.response.edit_message(view=self)
+
             async def confirm_selection(self, interaction: discord.Interaction):
-                # Update selections first
-                self.selected_names = [o.label for o in self.dropdown.options if o.value in self.dropdown.values]
-                self.selected_locations = [
-                    v.split('/', 1)[-1] if prompt_type == "map" else v for v in self.dropdown.values
-                ]
+                # Build final selections
+                self.selected_names = []
+                self.selected_locations = []
+                
+                for option in self.options:
+                    if option["location"] in self.selected_values:
+                        self.selected_names.append(option["name"])
+                        location = option["location"].split('/', 1)[-1] if prompt_type == "map" else option["location"]
+                        self.selected_locations.append(location)
                 
                 self.confirmed = True
                 await interaction.response.defer()
@@ -151,7 +208,7 @@ async def create_dropdown(
                     self.stop()
                     raise
 
-        view = DropdownView(prompt_type)
+        view = DropdownView(options, total_pages)
         if not interaction.response.is_done():
             await interaction.response.defer(ephemeral=True)
 

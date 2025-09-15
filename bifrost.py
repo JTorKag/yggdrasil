@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+import re
 
 _CHMOD_EXECUTOR: ThreadPoolExecutor | None = None
 
@@ -116,6 +117,40 @@ class bifrost:
             print("[CONFIG] Configuration validated successfully")
         return config
         
+    @staticmethod
+    def validate_filename(filename: str) -> dict:
+        """
+        Validate a filename for security issues.
+        
+        Args:
+            filename (str): The filename to validate.
+            
+        Returns:
+            dict: {"valid": bool, "error": str} - validation result and error message if invalid.
+        """
+        if not filename or not filename.strip():
+            return {"valid": False, "error": "Filename cannot be empty"}
+        
+        filename = filename.strip()
+        
+        # Check for path traversal
+        if ".." in filename:
+            return {"valid": False, "error": "Filename cannot contain '..' sequences"}
+        
+        # Check for path separators
+        if "/" in filename or "\\" in filename:
+            return {"valid": False, "error": "Filename cannot contain path separators"}
+        
+        # Check for files starting with dangerous characters
+        if filename.startswith("-") or filename.startswith("."):
+            return {"valid": False, "error": "Filename cannot start with '-' or '.'"}
+        
+        # Check for null bytes or other control characters
+        if "\x00" in filename or any(ord(c) < 32 for c in filename if c not in ['\t']):
+            return {"valid": False, "error": "Filename contains invalid control characters"}
+        
+        return {"valid": True, "error": ""}
+
     @staticmethod
     def parse_ygg_metadata(file_path):
         """
@@ -829,6 +864,12 @@ class bifrost:
         Returns:
             dict: A dictionary containing success status, extracted path, and error (if any).
         """
+        # Validate filename first
+        validation = bifrost.validate_filename(filename)
+        if not validation["valid"]:
+            return {"success": False, "error": f"Invalid filename: {validation['error']}"}
+        
+        zip_file_path = None
         try:
             dom_data_folder = config.get("dom_data_folder")
             if not dom_data_folder:
@@ -847,6 +888,7 @@ class bifrost:
 
             extract_folder = maps_folder / zip_file_path.stem
             if extract_folder.exists():
+                os.remove(zip_file_path)
                 return {"success": False, "error": f"A folder named '{zip_file_path.stem}' already exists in the maps folder."}
 
             await bifrost.safe_extract_zip(str(zip_file_path), str(extract_folder))
@@ -854,8 +896,12 @@ class bifrost:
             return {"success": True, "extracted_path": str(extract_folder)}
 
         except zipfile.BadZipFile:
+            if zip_file_path and os.path.exists(zip_file_path):
+                os.remove(zip_file_path)
             return {"success": False, "error": "The uploaded file is not a valid zip file."}
         except Exception as e:
+            if zip_file_path and os.path.exists(zip_file_path):
+                os.remove(zip_file_path)
             return {"success": False, "error": str(e)}
         
 
@@ -872,6 +918,12 @@ class bifrost:
         Returns:
             dict: A dictionary containing success status, extracted path, and error (if any).
         """
+        # Validate filename first
+        validation = bifrost.validate_filename(filename)
+        if not validation["valid"]:
+            return {"success": False, "error": f"Invalid filename: {validation['error']}"}
+        
+        zip_file_path = None
         try:
             dom_data_folder = config.get("dom_data_folder")
             if not dom_data_folder:
@@ -890,6 +942,7 @@ class bifrost:
 
             extract_folder = mods_folder / zip_file_path.stem
             if extract_folder.exists():
+                os.remove(zip_file_path)
                 return {"success": False, "error": f"A folder named '{zip_file_path.stem}' already exists in the mods folder."}
 
             await bifrost.safe_extract_zip(str(zip_file_path), str(extract_folder))
@@ -897,8 +950,12 @@ class bifrost:
             return {"success": True, "extracted_path": str(extract_folder)}
 
         except zipfile.BadZipFile:
+            if zip_file_path and os.path.exists(zip_file_path):
+                os.remove(zip_file_path)
             return {"success": False, "error": "The uploaded file is not a valid zip file."}
         except Exception as e:
+            if zip_file_path and os.path.exists(zip_file_path):
+                os.remove(zip_file_path)
             return {"success": False, "error": str(e)}
 
 
