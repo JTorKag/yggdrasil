@@ -10,6 +10,7 @@ from pathlib import Path
 from gjallarhorn import APIHandler
 import os
 from norns import TimerManager
+import subprocess
 
 
 def create_config():
@@ -40,41 +41,119 @@ def initialize_bot(config, db_instance, bot_ready_signal):
 
 async def handle_terminal_input(db_instance, bot_ready_signal, shutdown_signal, config=None):
     """Handles terminal input commands."""
+    sqlite_web_process = None
+    sqlite_timeout_task = None
+    
+    async def stop_sqlite_web():
+        nonlocal sqlite_web_process, sqlite_timeout_task
+        if sqlite_web_process and sqlite_web_process.returncode is None:
+            print("\nStopping SQLite web server...")
+            sqlite_web_process.terminate()
+            try:
+                await asyncio.wait_for(sqlite_web_process.wait(), timeout=5.0)
+            except asyncio.TimeoutError:
+                sqlite_web_process.kill()
+                await sqlite_web_process.wait()
+            print("SQLite web server stopped.")
+            sqlite_web_process = None
+        if sqlite_timeout_task:
+            sqlite_timeout_task.cancel()
+            sqlite_timeout_task = None
+    
+    async def sqlite_timeout():
+        await asyncio.sleep(1800)  # 30 minutes
+        print("\n⏰ SQLite web server auto-timeout (30 minutes) - shutting down...")
+        await stop_sqlite_web()
+    
     if config and config.get("debug", False):
         print("[DEBUG] Terminal input handler starting...")
         print("[DEBUG] Waiting for bot to be ready...")
     await bot_ready_signal.wait()
     if config and config.get("debug", False):
         print("[DEBUG] Bot ready! Terminal input is now active. Type 'help' for commands.")
-    while not shutdown_signal.is_set():
-        try:
-            user_input = await asyncio.to_thread(input, "\nEnter a command: ")
-            if user_input.lower() == 'help':
-                print(
-                    "\nexit: Shuts down Ygg server"
-                    "\nclose_db: Closes the database connection"
-                    "\nopen_db: Reopens the database connection"
-                    "\nactive_games: Displays the count of active games"
-                )
-            elif user_input.lower() == 'exit':
-                shutdown_signal.set()
-            elif user_input.lower() == 'close_db':
-                print("\nClosing DB connection.")
-                await db_instance.close()
-                print("\nDB closed.")
-            elif user_input.lower() == 'open_db':
-                await db_instance.connect()
-                print("\nDB instance reopened.")
-            elif user_input.lower() == 'active_games':
-                try:
-                    active_game_count = await db_instance.get_active_games_count()
-                    print(f"\nThere are currently {active_game_count} active games.")
-                except Exception as e:
-                    print(f"\nError getting active games count: {e}")
-            else:
-                print(f"\nUnknown command: {user_input}")
-        except EOFError:
-            break
+    
+    # Cleanup function for ephemeral behavior
+    async def cleanup_on_exit():
+        await stop_sqlite_web()
+    
+    try:
+        while not shutdown_signal.is_set():
+            try:
+                user_input = await asyncio.to_thread(input, "\nEnter a command: ")
+                if user_input.lower() == 'help':
+                    print(
+                        "\nexit: Shuts down Ygg server"
+                        "\nclose_db: Closes the database connection"
+                        "\nopen_db: Reopens the database connection"
+                        "\nactive_games: Displays the count of active games"
+                        "\nsqlite_web_start: [ADMIN] Start SQLite web server (30min timeout)"
+                        "\nsqlite_web_stop: [ADMIN] Stop SQLite web server"
+                        "\nsqlite_web_status: [ADMIN] Check SQLite web server status"
+                    )
+                elif user_input.lower() == 'exit':
+                    await stop_sqlite_web()
+                    shutdown_signal.set()
+                elif user_input.lower() == 'close_db':
+                    print("\nClosing DB connection.")
+                    await db_instance.close()
+                    print("\nDB closed.")
+                elif user_input.lower() == 'open_db':
+                    await db_instance.connect()
+                    print("\nDB instance reopened.")
+                elif user_input.lower() == 'active_games':
+                    try:
+                        active_game_count = await db_instance.get_active_games_count()
+                        print(f"\nThere are currently {active_game_count} active games.")
+                    except Exception as e:
+                        print(f"\nError getting active games count: {e}")
+                elif user_input.lower() == 'sqlite_web_start':
+                    if sqlite_web_process and sqlite_web_process.returncode is None:
+                        print("\nSQLite web server is already running.")
+                    else:
+                        password = config.get("sqlite_web_password", "")
+                        if not password:
+                            print("\nError: sqlite_web_password not configured in config.json")
+                            continue
+                        
+                        install_location = config.get("install_location", "/home/yggadmin/yggdrasil/")
+                        venv_path = os.path.join(install_location, "venv", "bin", "activate")
+                        db_path = os.path.join(install_location, "ygg.db")
+                        
+                        cmd = f'source {venv_path} && echo "{password}" | sqlite_web -H 0.0.0.0 -p 8080 -P {db_path}'
+                        
+                        try:
+                            sqlite_web_process = await asyncio.create_subprocess_shell(
+                                cmd,
+                                stdout=asyncio.subprocess.DEVNULL,
+                                stderr=asyncio.subprocess.DEVNULL
+                            )
+                            # Give it a moment to start
+                            await asyncio.sleep(0.5)
+                            if sqlite_web_process.returncode is None:
+                                print(f"\nSQLite web server started on port 8080 (PID: {sqlite_web_process.pid})")
+                                print(f"Access it at: http://{config.get('server_host', 'localhost')}:8080")
+                                print("⏰ Auto-timeout: 30 minutes")
+                                # Start timeout task
+                                sqlite_timeout_task = asyncio.create_task(sqlite_timeout())
+                            else:
+                                print(f"\nError: SQLite web server failed to start (exit code: {sqlite_web_process.returncode})")
+                        except Exception as e:
+                            print(f"\nError starting SQLite web server: {e}")
+                elif user_input.lower() == 'sqlite_web_stop':
+                    await stop_sqlite_web()
+                elif user_input.lower() == 'sqlite_web_status':
+                    if sqlite_web_process and sqlite_web_process.returncode is None:
+                        print(f"\nSQLite web server is running (PID: {sqlite_web_process.pid})")
+                        print(f"Access it at: http://{config.get('server_host', 'localhost')}:8080")
+                    else:
+                        print("\nSQLite web server is not running.")
+                else:
+                    print(f"\nUnknown command: {user_input}")
+            except EOFError:
+                break
+    finally:
+        # Ephemeral cleanup - always stop sqlite web server on exit
+        await cleanup_on_exit()
 
 async def shutdown(discordBot, db_instance, observer, shutdown_signal, timer_manager=None):
     """Handles final cleanup after services have been shut down."""
@@ -309,6 +388,31 @@ async def main():
                 
     except Exception as e:
         print(f"[ERROR] Error sending shutdown notifications: {e}")
+    
+    print("[INFO] Shutting down SQLite web server...")
+    if hasattr(discordBot, 'sqlite_web_process') and discordBot.sqlite_web_process and discordBot.sqlite_web_process.returncode is None:
+        try:
+            # Kill the entire process group to ensure all child processes are terminated
+            import signal as sig
+            try:
+                os.killpg(os.getpgid(discordBot.sqlite_web_process.pid), sig.SIGTERM)
+                await asyncio.wait_for(discordBot.sqlite_web_process.wait(), timeout=5.0)
+            except (ProcessLookupError, OSError):
+                # Process already dead or process group doesn't exist
+                pass
+            except asyncio.TimeoutError:
+                # Force kill if still running
+                try:
+                    os.killpg(os.getpgid(discordBot.sqlite_web_process.pid), sig.SIGKILL)
+                    await discordBot.sqlite_web_process.wait()
+                except (ProcessLookupError, OSError):
+                    pass
+        except Exception as e:
+            print(f"[ERROR] Error stopping SQLite web server: {e}")
+        print("SQLite web server stopped.")
+    
+    if hasattr(discordBot, 'sqlite_timeout_task') and discordBot.sqlite_timeout_task:
+        discordBot.sqlite_timeout_task.cancel()
     
     print("[INFO] Shutting down Discord bot...")
     await discordBot.close()
