@@ -3,9 +3,10 @@ Timer-related commands - extending, setting, managing game timers.
 """
 
 import discord
+from discord import app_commands
 from datetime import datetime, timezone, timedelta
 from bifrost import bifrost
-from ..decorators import require_bot_channel, require_game_channel, require_game_owner_or_admin
+from ..decorators import require_bot_channel, require_game_channel, require_game_owner_or_admin, require_game_admin
 
 
 def register_timer_commands(bot):
@@ -564,10 +565,123 @@ def register_timer_commands(bot):
         except Exception as e:
             await interaction.followup.send(f"Failed to retrieve extension stats: {e}")
 
+    @bot.tree.command(
+        name="adjust-chess-clock",
+        description="Admin only: Adjust chess clock time for a player in the current game.",
+        guild=discord.Object(id=bot.guild_id)
+    )
+    @require_game_channel(bot.config)
+    @require_game_admin(bot.config)
+    async def adjust_chess_clock_command(interaction: discord.Interaction, player: str, time_value: float):
+        """Adds or removes chess clock time for a player (hours or minutes based on game type)."""
+        await interaction.response.defer()
+
+        game_id = await bot.db_instance.get_game_id_by_channel(interaction.channel_id)
+        if not game_id:
+            await interaction.followup.send("No game lobby is associated with this channel.")
+            return
+
+        try:
+            game_info = await bot.db_instance.get_game_info(game_id)
+            if not game_info:
+                await interaction.followup.send("Game information not found.")
+                return
+
+            if not game_info.get('chess_clock_active', False):
+                await interaction.followup.send("Chess clock is not active for this game.")
+                return
+
+            player_entry = await bot.db_instance.get_player_by_game_and_user(game_id, player)
+            if not player_entry:
+                await interaction.followup.send("Selected player is not in this game.")
+                return
+
+            current_time = await bot.db_instance.get_player_chess_clock_time(game_id, player)
+
+            if game_info.get("game_type", "").lower() == "blitz":
+                adjustment_seconds = round(time_value * 60)
+                time_unit = "minutes"
+            else:
+                adjustment_seconds = round(time_value * 3600)
+                time_unit = "hours"
+
+            new_time = max(0, current_time + adjustment_seconds)
+
+            await bot.db_instance.update_player_chess_clock_time(game_id, player, new_time)
+
+            formatted_adjustment = f"{abs(time_value):g} {time_unit}"
+            action = "added to" if time_value >= 0 else "removed from"
+
+            if game_info.get("game_type", "").lower() == "blitz":
+                new_time_display = f"{new_time / 60:.1f} minutes"
+            else:
+                new_time_display = f"{new_time / 3600:.1f} hours"
+
+            # Get player display name
+            try:
+                user = interaction.guild.get_member(int(player)) or await bot.fetch_user(int(player))
+                player_name = user.display_name if hasattr(user, 'display_name') else user.name
+            except:
+                player_name = f"Player {player}"
+
+            await interaction.followup.send(
+                f"⏱️ Chess clock adjusted: {formatted_adjustment} {action} {player_name}'s timer.\n"
+                f"Their new chess clock time: {new_time_display}"
+            )
+
+        except Exception as e:
+            await interaction.followup.send(f"Failed to adjust chess clock: {e}")
+
+    @adjust_chess_clock_command.autocomplete("player")
+    async def player_autocomplete(interaction: discord.Interaction, current: str):
+        try:
+            game_id = await bot.db_instance.get_game_id_by_channel(interaction.channel_id)
+            if not game_id:
+                return []
+
+            players = await bot.db_instance.get_players_in_game(game_id)
+            if not players:
+                return []
+
+            choices = []
+            seen_players = set()
+
+            for player in players:
+                player_id = player["player_id"]
+                if player_id in seen_players:
+                    continue
+                seen_players.add(player_id)
+
+                try:
+                    user = interaction.guild.get_member(int(player_id))
+                    if not user:
+                        user = await bot.fetch_user(int(player_id))
+
+                    if user:
+                        display_name = user.display_name if hasattr(user, 'display_name') else user.name
+                        # Get all nations for this player
+                        player_nations = [p["nation"] for p in players if p["player_id"] == player_id]
+                        nations_str = ", ".join(player_nations) if player_nations else "Unknown"
+
+                        choice_name = f"{display_name} ({nations_str})"
+                        if current.lower() in choice_name.lower():
+                            choices.append(app_commands.Choice(name=choice_name[:100], value=player_id))
+                except Exception as e:
+                    if bot.config and bot.config.get("debug", False):
+                        print(f"[AUTOCOMPLETE] Error processing player {player_id}: {e}")
+
+            return choices[:25]  # Discord limits to 25 choices
+
+        except Exception as e:
+            if bot.config and bot.config.get("debug", False):
+                print(f"[AUTOCOMPLETE] Error in player autocomplete: {e}")
+            return []
+
     return [
         extend_timer_command,
         set_default_timer_command,
         timer_command,
         roll_back_command,
-        extensions_stats_command
+        extensions_stats_command,
+        adjust_chess_clock_command
     ]
