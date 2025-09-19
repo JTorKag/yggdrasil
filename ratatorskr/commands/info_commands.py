@@ -186,6 +186,7 @@ def register_info_commands(bot):
                     f"**Edge Starts**: {'True' if game_info['edgestart'] else 'False'}\n"
                     f"**No Artifact Restrictions**: {'True' if game_info['noartrest'] else 'False'}\n"
                     f"**No Level 9 Restrictions**: {'True' if game_info['nolvl9rest'] else 'False'}\n"
+                    f"**Diplomacy**: {game_info.get('diplo', 'Disabled')}\n"
                 ),
                 inline=False,
             )

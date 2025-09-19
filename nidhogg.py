@@ -58,6 +58,28 @@ class nidhogg:
             no_going_ai = game_details["no_going_ai"]
             research_random = game_details["research_random"]
             teamgame = game_details["teamgame"]
+
+            # Extra game settings
+            research_rate = game_details.get("research_rate")
+            hall_of_fame = game_details.get("hall_of_fame")
+            merc_slots = game_details.get("merc_slots")
+            indie_str = game_details.get("indie_str")
+            magicsites = game_details.get("magicsites")
+            richness = game_details.get("richness")
+            resources = game_details.get("resources")
+            recruitment = game_details.get("recruitment")
+            supplies = game_details.get("supplies")
+            startprov = game_details.get("startprov")
+            renaming = game_details.get("renaming")
+            scoregraphs = game_details.get("scoregraphs")
+            noartrest = game_details.get("noartrest")
+            nolvl9rest = game_details.get("nolvl9rest")
+            clustered = game_details.get("clustered")
+            edgestart = game_details.get("edgestart")
+            ai_level = game_details.get("ai_level")
+            conqall = game_details.get("conqall")
+            cataclysm = game_details.get("cataclysm")
+            diplo = game_details.get("diplo")
             if game_details["game_mods"] and game_details["game_mods"] not in ["[]", "None", ""]:
                 game_mods = game_details["game_mods"].split(",")
                 game_mods = [mod.strip() for mod in game_mods if mod.strip() and mod.strip() not in ["[]", "None"]]
@@ -116,6 +138,76 @@ class nidhogg:
 
             if teamgame:
                 command.append("--teamgame")
+
+            # Add extra game settings if they exist in database
+            if research_rate is not None:
+                command.extend(["--research", str(research_rate)])
+
+            if hall_of_fame is not None:
+                command.extend(["--hofsize", str(hall_of_fame)])
+
+            if merc_slots is not None:
+                command.extend(["--mercsize", str(merc_slots)])
+
+            if indie_str is not None:
+                command.extend(["--indepstr", str(indie_str)])
+
+            if magicsites is not None:
+                command.extend(["--magicsites", str(magicsites)])
+
+            if richness is not None:
+                command.extend(["--richness", str(richness)])
+
+            if resources is not None:
+                command.extend(["--resources", str(resources)])
+
+            if recruitment is not None:
+                command.extend(["--recruitment", str(recruitment)])
+
+            if supplies is not None:
+                command.extend(["--supplies", str(supplies)])
+
+            if startprov is not None:
+                command.extend(["--startprov", str(startprov)])
+
+            # Handle renaming setting
+            if renaming == "False":
+                command.append("--norenaming")
+            # If renaming is True or None, use default --renaming (already added above)
+
+            # Handle scoregraphs setting
+            if scoregraphs == "Show Graphs":
+                command.append("--scoregraphs")
+            elif scoregraphs == "Hide Nations":
+                command.append("--nonationinfo")
+            # If scoregraphs is "Default" or None, use default behavior
+
+            if noartrest == "True":
+                command.append("--noartrest")
+
+            if nolvl9rest == "True":
+                command.append("--nolvl9rest")
+
+            if clustered == "True":
+                command.append("--clustered")
+
+            if edgestart == "True":
+                command.append("--edgestart")
+
+            if ai_level is not None:
+                command.extend(["--newailvl", str(ai_level)])
+
+            if conqall == "True":
+                command.append("--conqall")
+
+            if cataclysm is not None:
+                command.extend(["--cataclysm", str(cataclysm)])
+
+            if diplo == "Disabled":
+                command.append("--nodiplo")
+            elif diplo == "Weak":
+                command.append("--weakdiplo")
+            # If diplo is "Binding" or None, use default behavior (no flag needed)
 
             command.append("--statfile")
             
@@ -296,7 +388,9 @@ class nidhogg:
 
             await db_instance.update_game_running(game_id, False)
         except ProcessLookupError:
-            raise ValueError(f"Process with PID {process_pid} not found.")
+            # Process already dead - update database state and continue
+            print(f"Process with PID {process_pid} not found - already terminated.")
+            await db_instance.update_game_running(game_id, False)
         except Exception as e:
             raise RuntimeError(f"Failed to kill process for game ID {game_id}: {e}")
 

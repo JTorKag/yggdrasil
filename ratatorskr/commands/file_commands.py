@@ -72,16 +72,9 @@ def register_file_commands(bot):
                 return
 
             # Use the paginated dropdown for viewing only
-            selected_mods, _, confirmed = await create_dropdown(
-                interaction, mods, "mod", multi_select=True, preselected_values=[], timeout=300
+            _, _, _ = await create_dropdown(
+                interaction, mods, "mod", multi_select=True, preselected_values=[], timeout=300, view_only=True
             )
-            
-            if confirmed:
-                if selected_mods:
-                    mod_list = "\n".join([f"• {mod}" for mod in selected_mods])
-                    await interaction.followup.send(f"**Selected mods (viewing only):**\n{mod_list}", ephemeral=True)
-                else:
-                    await interaction.followup.send("No mods selected.", ephemeral=True)
 
         except Exception as e:
             await interaction.response.send_message(f"An error occurred while fetching mods: {e}", ephemeral=True)
@@ -101,16 +94,9 @@ def register_file_commands(bot):
                 return
 
             # Use the paginated dropdown for viewing only
-            selected_maps, _, confirmed = await create_dropdown(
-                interaction, maps, "map", multi_select=False, preselected_values=[], timeout=300
+            _, _, _ = await create_dropdown(
+                interaction, maps, "map", multi_select=False, preselected_values=[], timeout=300, view_only=True
             )
-            
-            if confirmed:
-                if selected_maps:
-                    map_info = selected_maps[0]  # Single selection for maps
-                    await interaction.followup.send(f"**Selected map (viewing only):** {map_info}", ephemeral=True)
-                else:
-                    await interaction.followup.send("No map selected.", ephemeral=True)
 
         except Exception as e:
             await interaction.response.send_message(f"An error occurred while fetching maps: {e}", ephemeral=True)

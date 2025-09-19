@@ -163,6 +163,8 @@ class dbClient:
                     await cursor.execute("ALTER TABLE games ADD COLUMN chess_clock_per_turn_time INTEGER DEFAULT NULL;")
                 if "game_start_attempted" not in columns:
                     await cursor.execute("ALTER TABLE games ADD COLUMN game_start_attempted BOOLEAN DEFAULT 0;")
+                if "diplo" not in columns:
+                    await cursor.execute("ALTER TABLE games ADD COLUMN diplo TEXT DEFAULT 'Disabled';")
 
                 await cursor.execute("""
                 CREATE TABLE IF NOT EXISTS players (
@@ -524,6 +526,32 @@ class dbClient:
                 return active_games
         except Exception as e:
             print(f"Error fetching active games: {e}")
+            return []
+
+    async def get_running_games(self):
+        """
+        Fetch a list of games that are currently running (have active processes).
+
+        Returns:
+            list[dict]: A list of dictionaries, each containing details about a running game.
+        """
+        query = '''
+        SELECT game_id, game_name, game_era, game_owner, creation_date, creation_version, process_pid
+        FROM games
+        WHERE game_running = 1 AND process_pid IS NOT NULL
+        '''
+        try:
+            async with self.connection.cursor() as cursor:
+                await cursor.execute(query)
+                rows = await cursor.fetchall()
+
+                columns = [description[0] for description in cursor.description]
+
+                running_games = [dict(zip(columns, row)) for row in rows]
+
+                return running_games
+        except Exception as e:
+            print(f"Error fetching running games: {e}")
             return []
         
 

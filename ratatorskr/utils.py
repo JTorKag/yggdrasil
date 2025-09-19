@@ -68,7 +68,8 @@ async def create_dropdown(
         prompt_type: str = "option",
         multi_select: bool = True,
         preselected_values: List[str] = None,
-        timeout: int = 180) -> tuple[List[str], List[str], bool]:
+        timeout: int = 180,
+        view_only: bool = False) -> tuple[List[str], List[str], bool]:
         """Creates a paginated dropdown menu with confirm button and returns the names, locations, and confirmation status of selected options."""
         def resolve_emoji(emoji_code: str) -> Optional[discord.PartialEmoji]:
             """Resolves a custom emoji from its code."""
@@ -165,10 +166,11 @@ async def create_dropdown(
                     next_button.callback = self.next_page
                     self.add_item(next_button)
                 
-                # Confirm button
-                confirm_button = discord.ui.Button(label="Confirm Selection", style=discord.ButtonStyle.green)
-                confirm_button.callback = self.confirm_selection
-                self.add_item(confirm_button)
+                # Confirm button (only add if not view_only mode)
+                if not view_only:
+                    confirm_button = discord.ui.Button(label="Confirm Selection", style=discord.ButtonStyle.green)
+                    confirm_button.callback = self.confirm_selection
+                    self.add_item(confirm_button)
 
             async def previous_page(self, interaction: discord.Interaction):
                 if self.current_page > 0:
@@ -222,7 +224,10 @@ async def create_dropdown(
         except asyncio.TimeoutError:
             return [], [], False
 
-        if view.confirmed:
+        if view_only:
+            # In view-only mode, just return success without requiring confirmation
+            return [], [], True
+        elif view.confirmed:
             return view.selected_names, view.selected_locations, True
         else:
             return [], [], False

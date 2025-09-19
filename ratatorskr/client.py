@@ -142,10 +142,12 @@ class discordClient(discord.Client):
             print("[CLIENT] Syncing command tree with Discord...")
         await self.tree.sync(guild=discord.Object(id=self.guild_id))
         print("Commands synced!")
-        
+
         if self.config and self.config.get("debug", False):
             print("[CLIENT] Setting bot ready signal...")
         if self.bot_ready_signal:
             self.bot_ready_signal.set()
+
+        print("[INFO] Bot setup complete - terminal input is now ready!")
         if self.config and self.config.get("debug", False):
             print("[CLIENT] Setup hook complete!")

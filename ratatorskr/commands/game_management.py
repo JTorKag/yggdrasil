@@ -606,7 +606,351 @@ def register_game_management_commands(bot):
 
     if bot.config and bot.config.get("debug", False):
         print("[GAME_MGMT] edit-game command registered successfully")
-    
+
+    if bot.config and bot.config.get("debug", False):
+        print("[GAME_MGMT] Registering extra-game-settings command...")
+    @bot.tree.command(
+        name="extra-game-settings",
+        description="Edit additional game settings (research rate, provinces, magic sites, etc.)",
+        guild=discord.Object(id=bot.guild_id)
+    )
+    @require_game_channel(bot.config)
+    @require_game_owner_or_admin(bot.config)
+    async def extra_game_settings_command(
+        interaction: discord.Interaction,
+        research_rate: str = None,
+        hall_of_fame: int = None,
+        merc_slots: int = None,
+        indie_str: int = None,
+        magicsites: int = None,
+        richness: int = None,
+        resources: int = None,
+        recruitment: int = None,
+        supplies: int = None,
+        startprov: int = None,
+        renaming: str = None,
+        scoregraphs: str = None,
+        noartrest: str = None,
+        nolvl9rest: str = None,
+        clustered: str = None,
+        edgestart: str = None,
+        ai_level: int = None,
+        conqall: str = None,
+        cataclysm: int = None,
+        diplo: str = None
+    ):
+        """
+        Edit additional game settings beyond the basic options.
+        Only works on games that haven't started yet.
+        """
+        try:
+            # Defer interaction to prevent timeout
+            await interaction.response.defer(ephemeral=True)
+
+            # Get the game ID from the channel ID
+            game_id = await bot.db_instance.get_game_id_by_channel(interaction.channel_id)
+            if not game_id:
+                await interaction.followup.send("This channel is not associated with an active game.", ephemeral=True)
+                return
+
+            # Fetch game details
+            game_info = await bot.db_instance.get_game_info(game_id)
+            if not game_info:
+                await interaction.followup.send(f"No game found with ID {game_id}.", ephemeral=True)
+                return
+
+            # Reject edits if the game has already started
+            if game_info["game_started"]:
+                await interaction.followup.send(f"Cannot edit game settings. The game in this channel has already started.", ephemeral=True)
+                return
+
+            # Collect all provided parameters (excluding None values)
+            provided_params = {}
+            local_vars = locals()
+            param_names = [
+                'research_rate', 'hall_of_fame', 'merc_slots', 'indie_str', 'magicsites',
+                'richness', 'resources', 'recruitment', 'supplies', 'startprov',
+                'renaming', 'scoregraphs', 'noartrest', 'nolvl9rest', 'clustered',
+                'edgestart', 'ai_level', 'conqall', 'cataclysm', 'diplo'
+            ]
+
+            for param in param_names:
+                if local_vars[param] is not None:
+                    provided_params[param] = local_vars[param]
+
+            if not provided_params:
+                await interaction.followup.send("No settings provided. Please specify at least one setting to change.", ephemeral=True)
+                return
+
+            # Validate all provided parameters
+            validation_errors = []
+
+            # Validate numeric ranges
+            if 'research_rate' in provided_params:
+                # Handle both string names and numeric values
+                if isinstance(provided_params['research_rate'], str):
+                    research_map = {
+                        "Very Easy": 0, "Easy": 1, "Standard": 2,
+                        "Difficult": 3, "Very Difficult": 4
+                    }
+                    if provided_params['research_rate'] in research_map:
+                        provided_params['research_rate'] = research_map[provided_params['research_rate']]
+                    else:
+                        validation_errors.append("research_rate must be Very Easy, Easy, Standard, Difficult, or Very Difficult")
+                elif not (0 <= provided_params['research_rate'] <= 4):
+                    validation_errors.append("research_rate must be between 0-4")
+
+            if 'hall_of_fame' in provided_params:
+                if not (5 <= provided_params['hall_of_fame'] <= 15):
+                    validation_errors.append("hall_of_fame must be between 5-15")
+
+            if 'merc_slots' in provided_params:
+                if not (0 <= provided_params['merc_slots'] <= 10):
+                    validation_errors.append("merc_slots must be between 0-10")
+
+            if 'indie_str' in provided_params:
+                if not (0 <= provided_params['indie_str'] <= 9):
+                    validation_errors.append("indie_str must be between 0-9")
+
+            if 'magicsites' in provided_params:
+                if not (0 <= provided_params['magicsites'] <= 75):
+                    validation_errors.append("magicsites must be between 0-75")
+
+            if 'richness' in provided_params:
+                if not (50 <= provided_params['richness'] <= 300):
+                    validation_errors.append("richness must be between 50-300")
+
+            if 'resources' in provided_params:
+                if not (50 <= provided_params['resources'] <= 300):
+                    validation_errors.append("resources must be between 50-300")
+
+            if 'recruitment' in provided_params:
+                if not (50 <= provided_params['recruitment'] <= 300):
+                    validation_errors.append("recruitment must be between 50-300")
+
+            if 'supplies' in provided_params:
+                if not (50 <= provided_params['supplies'] <= 300):
+                    validation_errors.append("supplies must be between 50-300")
+
+            if 'startprov' in provided_params:
+                if not (1 <= provided_params['startprov'] <= 9):
+                    validation_errors.append("startprov must be between 1-9")
+
+            if 'ai_level' in provided_params:
+                if not (1 <= provided_params['ai_level'] <= 6):
+                    validation_errors.append("ai_level must be between 1-6")
+
+            if 'cataclysm' in provided_params:
+                if not (0 <= provided_params['cataclysm'] <= 999):
+                    validation_errors.append("cataclysm must be between 0-999")
+
+            # Validate choice parameters
+            scoregraphs_options = ["Default", "Show Graphs", "Hide Nations"]
+            if 'scoregraphs' in provided_params:
+                if provided_params['scoregraphs'] not in scoregraphs_options:
+                    validation_errors.append(f"scoregraphs must be one of: {', '.join(scoregraphs_options)}")
+
+            diplo_options = ["Disabled", "Weak", "Binding"]
+            if 'diplo' in provided_params:
+                if provided_params['diplo'] not in diplo_options:
+                    validation_errors.append(f"diplo must be one of: {', '.join(diplo_options)}")
+
+            # Show validation errors if any
+            if validation_errors:
+                error_text = "\n".join([f"• {error}" for error in validation_errors])
+                await interaction.followup.send(f"❌ Validation errors:\n{error_text}", ephemeral=True)
+                return
+
+            # Update each provided setting
+            updates_made = []
+            for setting_name, new_value in provided_params.items():
+                try:
+                    # Convert string boolean parameters to actual boolean values
+                    if setting_name in ['renaming', 'noartrest', 'nolvl9rest', 'clustered', 'edgestart', 'conqall']:
+                        if isinstance(new_value, str):
+                            if new_value.lower() in ['true', '1', 'yes', 'on']:
+                                new_value = True
+                            elif new_value.lower() in ['false', '0', 'no', 'off']:
+                                new_value = False
+                            else:
+                                await interaction.followup.send(f"Invalid value for {setting_name}. Use True/False.", ephemeral=True)
+                                return
+
+                    # Convert scoregraphs to database format
+                    if setting_name == 'scoregraphs':
+                        scoregraphs_map = {"Default": 0, "Show Graphs": 1, "Hide Nations": 2}
+                        new_value = scoregraphs_map[new_value]
+
+                    await bot.db_instance.update_game_property(game_id, setting_name, new_value)
+                    updates_made.append(f"{setting_name}: {provided_params[setting_name] if setting_name != 'scoregraphs' else provided_params[setting_name]}")
+                except Exception as e:
+                    await interaction.followup.send(f"Failed to update {setting_name}: {e}", ephemeral=True)
+                    return
+
+            game_name = game_info.get("game_name", f"Game ID {game_id}")
+            updates_text = "\n".join([f"• {update}" for update in updates_made])
+
+            await interaction.followup.send(
+                f"✅ Successfully updated extra settings for **{game_name}**:\n{updates_text}",
+                ephemeral=True
+            )
+
+        except Exception as e:
+            await interaction.followup.send(f"An error occurred: {e}", ephemeral=True)
+
+    # Autocomplete functions for numeric parameters
+    @extra_game_settings_command.autocomplete("research_rate")
+    async def research_rate_autocomplete(interaction: discord.Interaction, current: str):
+        options = [
+            ("Very Easy", 0),
+            ("Easy", 1),
+            ("Standard", 2),
+            ("Difficult", 3),
+            ("Very Difficult", 4)
+        ]
+        matches = [option for option in options if current.lower() in option[0].lower()]
+        if not matches:
+            matches = options
+        return [app_commands.Choice(name=f"{name} {'(default)' if value == 2 else ''}", value=name) for name, value in matches]
+
+    @extra_game_settings_command.autocomplete("hall_of_fame")
+    async def hall_of_fame_autocomplete(interaction: discord.Interaction, current: str):
+        options = [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]  # 10 is default
+        matches = [str(option) for option in options if current.isdigit() and current in str(option)]
+        if not matches or not current:
+            matches = [str(option) for option in options]
+        return [app_commands.Choice(name=f"{match} {'(default)' if int(match) == 10 else ''}", value=int(match)) for match in matches]
+
+    @extra_game_settings_command.autocomplete("merc_slots")
+    async def merc_slots_autocomplete(interaction: discord.Interaction, current: str):
+        options = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]  # 5 is default
+        matches = [str(option) for option in options if current.isdigit() and current in str(option)]
+        if not matches or not current:
+            matches = [str(option) for option in options]
+        return [app_commands.Choice(name=f"{match} {'(default)' if int(match) == 5 else ''}", value=int(match)) for match in matches]
+
+    @extra_game_settings_command.autocomplete("indie_str")
+    async def indie_str_autocomplete(interaction: discord.Interaction, current: str):
+        options = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]  # 5 is default
+        matches = [str(option) for option in options if current.isdigit() and current in str(option)]
+        if not matches or not current:
+            matches = [str(option) for option in options]
+        return [app_commands.Choice(name=f"{match} {'(default)' if int(match) == 5 else ''}", value=int(match)) for match in matches]
+
+    @extra_game_settings_command.autocomplete("magicsites")
+    async def magicsites_autocomplete(interaction: discord.Interaction, current: str):
+        # All values from 0 to 75 in intervals of 5
+        options = list(range(0, 80, 5))  # 0, 5, 10, 15, ..., 75
+        matches = [str(option) for option in options if current.isdigit() and current in str(option)]
+        if not matches or not current:
+            matches = [str(option) for option in options]
+        return [app_commands.Choice(name=f"{match} {'(late default)' if int(match) == 45 else '(middle default)' if int(match) == 55 else '(early default)' if int(match) == 65 else ''}", value=int(match)) for match in matches]
+
+    @extra_game_settings_command.autocomplete("richness")
+    async def richness_autocomplete(interaction: discord.Interaction, current: str):
+        return [app_commands.Choice(name="100", value=100)]
+
+    @extra_game_settings_command.autocomplete("resources")
+    async def resources_autocomplete(interaction: discord.Interaction, current: str):
+        return [app_commands.Choice(name="100", value=100)]
+
+    @extra_game_settings_command.autocomplete("recruitment")
+    async def recruitment_autocomplete(interaction: discord.Interaction, current: str):
+        return [app_commands.Choice(name="100", value=100)]
+
+    @extra_game_settings_command.autocomplete("supplies")
+    async def supplies_autocomplete(interaction: discord.Interaction, current: str):
+        return [app_commands.Choice(name="100", value=100)]
+
+    @extra_game_settings_command.autocomplete("startprov")
+    async def startprov_autocomplete(interaction: discord.Interaction, current: str):
+        options = [1, 2, 3, 4, 5, 6, 7, 8, 9]
+        matches = [str(option) for option in options if current.isdigit() and current in str(option)]
+        if not matches or not current:
+            matches = [str(option) for option in options]
+        return [app_commands.Choice(name=match, value=int(match)) for match in matches]
+
+    @extra_game_settings_command.autocomplete("ai_level")
+    async def ai_level_autocomplete(interaction: discord.Interaction, current: str):
+        options = [1, 2, 3, 4, 5, 6]  # 2 is default
+        matches = [str(option) for option in options if current.isdigit() and current in str(option)]
+        if not matches or not current:
+            matches = [str(option) for option in options]
+        return [app_commands.Choice(name=f"{match} {'(default)' if int(match) == 2 else ''}", value=int(match)) for match in matches]
+
+    # Autocomplete functions for choice parameters
+    @extra_game_settings_command.autocomplete("scoregraphs")
+    async def scoregraphs_autocomplete(interaction: discord.Interaction, current: str):
+        options = ["Default", "Show Graphs", "Hide Nations"]
+        matches = [option for option in options if current.lower() in option.lower()]
+        return [app_commands.Choice(name=match, value=match) for match in matches]
+
+    @extra_game_settings_command.autocomplete("renaming")
+    async def renaming_autocomplete(interaction: discord.Interaction, current: str):
+        options = ["True", "False"]
+        matches = [option for option in options if current.lower() in option.lower()]
+        return [app_commands.Choice(name=match, value=match) for match in matches]
+
+    @extra_game_settings_command.autocomplete("noartrest")
+    async def noartrest_autocomplete(interaction: discord.Interaction, current: str):
+        options = [
+            ("False", "False"),
+            ("True - Players can create more than one artifact per turn", "True")
+        ]
+        matches = [option for option in options if current.lower() in option[1].lower()]
+        if not matches:
+            matches = options
+        return [app_commands.Choice(name=name, value=value) for name, value in matches]
+
+    @extra_game_settings_command.autocomplete("nolvl9rest")
+    async def nolvl9rest_autocomplete(interaction: discord.Interaction, current: str):
+        options = [
+            ("False", "False"),
+            ("True - Players research lvl 9 spells as fast as any other spells", "True")
+        ]
+        matches = [option for option in options if current.lower() in option[1].lower()]
+        if not matches:
+            matches = options
+        return [app_commands.Choice(name=name, value=value) for name, value in matches]
+
+    @extra_game_settings_command.autocomplete("clustered")
+    async def clustered_autocomplete(interaction: discord.Interaction, current: str):
+        options = ["False", "True"]
+        matches = [option for option in options if current.lower() in option.lower()]
+        return [app_commands.Choice(name=match, value=match) for match in matches]
+
+    @extra_game_settings_command.autocomplete("edgestart")
+    async def edgestart_autocomplete(interaction: discord.Interaction, current: str):
+        options = ["False", "True"]
+        matches = [option for option in options if current.lower() in option.lower()]
+        return [app_commands.Choice(name=match, value=match) for match in matches]
+
+    @extra_game_settings_command.autocomplete("conqall")
+    async def conqall_autocomplete(interaction: discord.Interaction, current: str):
+        options = [
+            ("True - Win by eliminating all opponents only", "True"),
+            ("False", "False")
+        ]
+        matches = [option for option in options if current.lower() in option[1].lower()]
+        if not matches:
+            matches = options
+        return [app_commands.Choice(name=name, value=value) for name, value in matches]
+
+    @extra_game_settings_command.autocomplete("diplo")
+    async def diplo_autocomplete(interaction: discord.Interaction, current: str):
+        options = [
+            ("Disabled", "Disabled"),
+            ("Weak", "Weak"),
+            ("Binding", "Binding")
+        ]
+        matches = [option for option in options if current.lower() in option[1].lower()]
+        if not matches:
+            matches = options
+        return [app_commands.Choice(name=name, value=value) for name, value in matches]
+
+    if bot.config and bot.config.get("debug", False):
+        print("[GAME_MGMT] extra-game-settings command registered successfully")
+
     if bot.config and bot.config.get("debug", False):
         print("[GAME_MGMT] Registering launch command...")
     @bot.tree.command(
@@ -1460,7 +1804,8 @@ def register_game_management_commands(bot):
         select_map_command,
         select_mods_command,
         new_game_command,
-        edit_game_command, 
+        edit_game_command,
+        extra_game_settings_command,
         launch_command,
         start_game_command,
         restart_game_to_lobby_command,

@@ -161,11 +161,11 @@ async def shutdown(discordBot, db_instance, observer, shutdown_signal, timer_man
     
     try:
         print("[INFO] Cleaning up running game screen sessions...")
-        # Use the same nidhogg class that's used throughout the application
-        active_games = await db_instance.get_active_games()
-        if active_games:
-            print(f"[INFO] Found {len(active_games)} active games to clean up")
-            for game in active_games:
+        # Get only games that are actually running (not just active in database)
+        running_games = await db_instance.get_running_games()
+        if running_games:
+            print(f"[INFO] Found {len(running_games)} running games to clean up")
+            for game in running_games:
                 game_id = game.get("game_id")
                 game_name = game.get("game_name", f"game_{game_id}")
                 
@@ -286,13 +286,9 @@ async def main():
     async def on_ready():
         print(f"[INFO] Discord bot connected as {discordBot.user}")
         print(f"[INFO] Connected to guild: {discordBot.get_guild(config.get('guild_id'))}")
-        
+
         # Commands are synced in setup_hook(), not here
-        
-        if bot_ready_signal:
-            bot_ready_signal.set()
-            if config and config.get("debug", False):
-                print("[DEBUG] Bot ready signal set!")
+        # Bot ready signal is set in setup_hook() after command sync completes
         
     @discordBot.event
     async def on_resumed():
