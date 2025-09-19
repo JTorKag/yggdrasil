@@ -76,19 +76,11 @@ def require_game_channel(config):
 
             allowed_channels = set()
 
-            if command_name == "delete-lobby":
-                inactive_game_channels = [
-                    game["channel_id"]
-                    for game in await bot.db_instance.get_inactive_games()
-                ]
-                allowed_channels.update(inactive_game_channels)
-                if config and config.get("debug", False):
-                    print(f"[DECORATOR] {command_name} - inactive game channels: {inactive_game_channels}")
-            else:
-                active_game_channels = await bot.db_instance.get_active_game_channels()
-                allowed_channels.update(active_game_channels)
-                if config and config.get("debug", False):
-                    print(f"[DECORATOR] {command_name} - active game channels: {active_game_channels}")
+            # Game commands should work in any active game channel
+            active_game_channels = await bot.db_instance.get_active_game_channels()
+            allowed_channels.update(active_game_channels)
+            if config and config.get("debug", False):
+                print(f"[DECORATOR] {command_name} - active game channels: {active_game_channels}")
 
             if config and config.get("debug", False):
                 print(f"[DECORATOR] {command_name} - current channel: {interaction.channel_id}")

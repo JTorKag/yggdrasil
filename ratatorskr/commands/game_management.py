@@ -1105,15 +1105,9 @@ def register_game_management_commands(bot):
             starting_time = game_info.get("chess_clock_starting_time", 0)
             if starting_time > 0:
                 try:
-                    async with bot.db_instance.connection.execute(
-                        "UPDATE players SET chess_clock_time_remaining = ? WHERE game_id = ? AND chess_clock_time_remaining = 0",
-                        (starting_time, game_id)
-                    ) as cursor:
-                        await bot.db_instance.connection.commit()
-                        updated_count = cursor.rowcount
-                        if bot.config and bot.config.get("debug", False):
-                            if bot.config and bot.config.get("debug", False):
-                                print(f"[DEBUG] Initialized chess clock for {updated_count} players with {starting_time} seconds")
+                    updated_count = await bot.db_instance.reset_zero_chess_clock_times(game_id, starting_time)
+                    if bot.config and bot.config.get("debug", False):
+                        print(f"[DEBUG] Initialized chess clock for {updated_count} players with {starting_time} seconds")
                 except Exception as e:
                     print(f"[ERROR] Failed to initialize chess clock times: {e}")
 
@@ -1270,7 +1264,7 @@ def register_game_management_commands(bot):
             
             await bot.db_instance.update_game_running(game_id, False)
             await bot.db_instance.set_timer_running(game_id, False)
-            await bot.db_instance.update_game_property(game_id, "game_active", False)
+            await bot.db_instance.update_game_property(game_id, "game_ended", True)
             
             if game_winner == "-666":
                 winner_text = "Everybody Lost"
@@ -1283,10 +1277,7 @@ def register_game_management_commands(bot):
                 except:
                     winner_text = f"Player {game_winner}"
             
-            import aiosqlite
-            query = "UPDATE games SET game_winner = ? WHERE game_id = ?"
-            async with bot.db_instance.connection.execute(query, (winner_value, game_id)) as cursor:
-                await bot.db_instance.connection.commit()
+            await bot.db_instance.update_game_winner(game_id, winner_value)
             
             await interaction.followup.send(f"Game {game_info['game_name']} has been successfully ended. Winner: {winner_text}.")
         except Exception as e:
@@ -1734,8 +1725,12 @@ def register_game_management_commands(bot):
             await interaction.followup.send("Game information not found.")
             return
             
-        if game_info["game_active"]:
-            await interaction.followup.send("The game is still active. Please end the game before deleting the lobby.")
+        # Only allow deletion if the game was never started OR has been properly ended
+        game_started = game_info.get("game_started", False)
+        game_ended = game_info.get("game_ended", False)
+
+        if game_started and not game_ended:
+            await interaction.followup.send("The game has started but hasn't been ended. Please use /end-game before deleting the lobby.")
             return
 
         if confirm_game_name != game_info["game_name"]:
@@ -1773,21 +1768,26 @@ def register_game_management_commands(bot):
             
             # Delete timers for this game (no longer needed)
             try:
-                async with bot.db_instance.connection.execute("DELETE FROM gameTimers WHERE game_id = ?", (game_id,)) as cursor:
-                    await bot.db_instance.connection.commit()
+                await bot.db_instance.delete_game_timers(game_id)
                 if bot.config and bot.config.get("debug", False):
-                    if bot.config and bot.config.get("debug", False):
-                        print(f"[DEBUG] Deleted timers for game {game_id}")
+                    print(f"[DEBUG] Deleted timers for game {game_id}")
             except Exception as e:
                 if bot.config and bot.config.get("debug", False):
-                    if bot.config and bot.config.get("debug", False):
-                        print(f"[DEBUG] Failed to delete timers for game {game_id}: {e}")
+                    print(f"[DEBUG] Failed to delete timers for game {game_id}: {e}")
             
+            # Mark game as inactive since lobby is being deleted
+            try:
+                await bot.db_instance.mark_game_inactive(game_id)
+                if bot.config and bot.config.get("debug", False):
+                    print(f"[DEBUG] Marked game {game_id} as inactive")
+            except Exception as e:
+                if bot.config and bot.config.get("debug", False):
+                    print(f"[DEBUG] Failed to mark game as inactive: {e}")
+
             # Keep game record for historical purposes - don't delete it
             if bot.config and bot.config.get("debug", False):
-                if bot.config and bot.config.get("debug", False):
-                    print(f"[DEBUG] Preserving game {game_id} record for historical purposes")
-            
+                print(f"[DEBUG] Preserving game {game_id} record for historical purposes")
+
             # Delete the Discord channel
             channel = interaction.channel
             await channel.delete()

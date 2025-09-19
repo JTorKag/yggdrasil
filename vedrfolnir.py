@@ -165,6 +165,8 @@ class dbClient:
                     await cursor.execute("ALTER TABLE games ADD COLUMN game_start_attempted BOOLEAN DEFAULT 0;")
                 if "diplo" not in columns:
                     await cursor.execute("ALTER TABLE games ADD COLUMN diplo TEXT DEFAULT 'Disabled';")
+                if "game_ended" not in columns:
+                    await cursor.execute("ALTER TABLE games ADD COLUMN game_ended BOOLEAN DEFAULT 0;")
 
                 await cursor.execute("""
                 CREATE TABLE IF NOT EXISTS players (
@@ -1021,6 +1023,70 @@ class dbClient:
             print(f"Error fetching inactive game channels: {e}")
             return []
 
+    async def get_unstarted_games(self):
+        """Retrieve games that are active but not yet started (lobby state)."""
+        async def _operation():
+            query = '''
+            SELECT channel_id
+            FROM games
+            WHERE game_active = 1 AND game_started = 0;
+            '''
+            async with self.connection.cursor() as cursor:
+                await cursor.execute(query)
+                rows = await cursor.fetchall()
+            return [{"channel_id": int(row[0])} for row in rows if row[0] is not None]
+
+        try:
+            return await self._execute_with_retry(_operation)
+        except Exception as e:
+            print(f"Error fetching unstarted game channels: {e}")
+            return []
+
+
+    async def mark_game_inactive(self, game_id):
+        """Mark a game as inactive when the lobby is deleted."""
+        async def _operation():
+            query = "UPDATE games SET game_active = 0 WHERE game_id = :game_id;"
+            async with self.connection.cursor() as cursor:
+                await cursor.execute(query, {"game_id": game_id})
+                await self.connection.commit()
+
+        return await self._execute_with_retry(_operation)
+
+    async def delete_game_timers(self, game_id):
+        """Delete all timers for a specific game."""
+        async def _operation():
+            query = "DELETE FROM gameTimers WHERE game_id = :game_id;"
+            async with self.connection.cursor() as cursor:
+                await cursor.execute(query, {"game_id": game_id})
+                await self.connection.commit()
+
+        return await self._execute_with_retry(_operation)
+
+    async def update_game_winner(self, game_id, winner_id):
+        """Update the winner of a game."""
+        async def _operation():
+            query = "UPDATE games SET game_winner = :winner WHERE game_id = :game_id;"
+            async with self.connection.cursor() as cursor:
+                await cursor.execute(query, {"winner": winner_id, "game_id": game_id})
+                await self.connection.commit()
+
+        return await self._execute_with_retry(_operation)
+
+    async def reset_zero_chess_clock_times(self, game_id, new_time):
+        """Reset chess clock times that are at zero to a new value (for restarts)."""
+        async def _operation():
+            query = """
+            UPDATE players
+            SET chess_clock_time_remaining = :new_time
+            WHERE game_id = :game_id AND chess_clock_time_remaining = 0
+            """
+            async with self.connection.cursor() as cursor:
+                await cursor.execute(query, {"new_time": new_time, "game_id": game_id})
+                await self.connection.commit()
+                return cursor.rowcount
+
+        return await self._execute_with_retry(_operation)
 
     async def update_process_pid(self, game_id, pid):
         query = """
