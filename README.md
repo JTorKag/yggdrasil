@@ -171,8 +171,11 @@ Commands are organized by function and include permission restrictions to ensure
 #### **Game Creation & Setup**
 - `/new-game` - Create a new game with detailed settings *[Main Bot Channel, Host/Admin]*
 - `/edit-game` - Edit game properties (map, mods, settings) *[Game Channel, Owner/Admin]*
+- `/extra-game-settings` - Configure advanced game parameters (research rate, diplo, hall of fame, etc.) *[Game Channel, Owner/Admin]*
 - `/select-map` - Choose from available maps *[Game Channel, Owner/Admin]*
 - `/select-mods` - Choose from available mods *[Game Channel, Owner/Admin]*
+- `/view-maps` - Browse available maps without selection *[Main Bot Channel]*
+- `/view-mods` - Browse available mods without selection *[Main Bot Channel]*
 - `/upload-map` - Upload custom map files *[Main Bot Channel, Host/Admin]*
 - `/upload-mod` - Upload custom mod files *[Main Bot Channel, Host/Admin]*
 
@@ -213,6 +216,23 @@ Commands are organized by function and include permission restrictions to ensure
 #### **Administrative Commands**
 - `/delete-lobby` - Permanently delete game lobby and role *[Game Channel, Owner/Admin]*
 - `/reset-game-started` - Reset game started flag *[Game Channel, Admin Only]*
+
+#### **Enhanced User Experience Features**
+
+**Friendly Nation Names**: All nation selection interfaces now display human-readable nation names alongside technical identifiers:
+- **Claim dropdowns** show "Tsmuwich (modnat_402)" instead of just "modnat_402"
+- **Pretenders command** displays "Ulm (mid_ulm): Player Name" for better readability
+- **Real-time parsing** of statusdump.txt ensures names are always current and accurate
+
+**Advanced Game Configuration**: The `/extra-game-settings` command provides access to 19+ advanced Dominions 6 parameters:
+- Research rate (Slow, Normal, Fast, Very Fast)
+- Diplomacy settings (Disabled, Weak, Binding)
+- Score graphs, event rarity, magic site frequency, and more
+- Autocomplete suggestions for all parameters with user-friendly names
+
+**Improved Navigation**: Browse commands use paginated dropdowns without confirmation requirements:
+- `/view-maps` and `/view-mods` let you explore available content
+- Enhanced file organization with emoji and description support
 
 ---
 
