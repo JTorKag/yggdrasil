@@ -148,21 +148,21 @@ class bifrost:
     @staticmethod
     def parse_ygg_metadata(file_path):
         """
-        Parse a file to extract #yggemoji, #yggdescr, and #descr metadata.
+        Parse a file to extract #yggemoji, #yggdescr, and #description metadata.
 
         Args:
             file_path (str): The path to the file to parse.
 
         Returns:
             dict: A dictionary containing 'yggemoji' and 'yggdescr' values, if found.
-                  If #yggdescr is not found but #descr is, uses #descr as fallback.
+                  Priority: #yggdescr > #description
         """
         metadata = {
             "yggemoji": "::",
             "yggdescr": ""
         }
 
-        descr_fallback = ""  # Store #descr as fallback if no #yggdescr
+        description_fallback = ""  # Store #description as fallback
 
         try:
             with open(file_path, 'r', encoding='utf-8') as file:
@@ -174,19 +174,19 @@ class bifrost:
                     elif line.startswith("#yggdescr"):
                         description = line[len("#yggdescr"):].strip().strip('"').strip("'")
                         metadata["yggdescr"] = description
-                    elif line.startswith("#descr") and not line.startswith("#description"):
-                        # Capture standard Dominions #descr tag as fallback
-                        description = line[len("#descr"):].strip().strip('"').strip("'")
-                        descr_fallback = description
+                    elif line.startswith("#description"):
+                        # Capture #description tag as fallback
+                        description = line[len("#description"):].strip().strip('"').strip("'")
+                        description_fallback = description
 
         except FileNotFoundError:
             print(f"File not found: {file_path}")
         except Exception as e:
             print(f"Error parsing file {file_path}: {e}")
 
-        # Use #descr as fallback if no #yggdescr was found
-        if not metadata["yggdescr"] and descr_fallback:
-            metadata["yggdescr"] = descr_fallback
+        # Use #description as fallback if no #yggdescr was found
+        if not metadata["yggdescr"] and description_fallback:
+            metadata["yggdescr"] = description_fallback
 
         return metadata
 

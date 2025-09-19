@@ -36,6 +36,9 @@ def register_game_management_commands(bot):
     @require_game_channel(bot.config)
     @require_game_owner_or_admin(bot.config)
     async def select_map_command(interaction: discord.Interaction):
+        debug = bot.config.get("debug", False)
+        if not debug:
+            print("[SELECT_MAP] Processing map selection")
         game_id = await bot.db_instance.get_game_id_by_channel(interaction.channel.id)
         if game_id is None:
             await interaction.response.send_message("This channel is not associated with any active game.", ephemeral=True)
@@ -50,6 +53,9 @@ def register_game_management_commands(bot):
         if game_id in pending_selections:
             await interaction.response.send_message("There is already a pending map or mod selection for this game. Please complete or cancel that selection first.", ephemeral=True)
             return
+
+        # Defer the interaction early to prevent timeout
+        await interaction.response.defer(ephemeral=True)
 
         current_map = await bot.db_instance.get_map(game_id)
 
@@ -90,11 +96,18 @@ def register_game_management_commands(bot):
     @require_game_channel(bot.config)
     @require_game_owner_or_admin(bot.config)
     async def select_mods_command(interaction: discord.Interaction):
+        debug = bot.config.get("debug", False)
+        if debug:
+            print(f"[SELECT_MODS] Command started for channel {interaction.channel.id}")
+        else:
+            print("[SELECT_MODS] Processing mod selection")
         game_id = await bot.db_instance.get_game_id_by_channel(interaction.channel.id)
         if game_id is None:
             await interaction.response.send_message("This channel is not associated with any active game.", ephemeral=True)
             return
 
+        if debug:
+            print(f"[SELECT_MODS] Got game_id: {game_id}")
         game_info = await bot.db_instance.get_game_info(game_id)
         if game_info:
             if game_info.get("game_started"):
@@ -109,17 +122,39 @@ def register_game_management_commands(bot):
             await interaction.response.send_message("There is already a pending map or mod selection for this game. Please complete or cancel that selection first.", ephemeral=True)
             return
 
-        current_mods = await bot.db_instance.get_mods(game_id)
+        if debug:
+            print("[SELECT_MODS] About to defer interaction")
+        # Defer the interaction early to prevent timeout
+        await interaction.response.defer(ephemeral=True)
+        if debug:
+            print("[SELECT_MODS] Interaction deferred successfully")
 
+        if debug:
+            print("[SELECT_MODS] Getting current mods from DB")
+        current_mods = await bot.db_instance.get_mods(game_id)
+        if debug:
+            print(f"[SELECT_MODS] Current mods: {current_mods}")
+
+        if debug:
+            print("[SELECT_MODS] Getting available mods from bifrost")
         mods = bifrost.get_mods(config=bot.config)
+        if debug:
+            print(f"[SELECT_MODS] Found {len(mods)} available mods")
 
         # Mark this game as having a pending selection
         pending_selections.add(game_id)
-        
+        if debug:
+            print(f"[SELECT_MODS] Added game {game_id} to pending_selections")
+
         try:
+            if debug:
+                print("[SELECT_MODS] About to call create_dropdown")
+                print(f"[SELECT_MODS] interaction.response.is_done() = {interaction.response.is_done()}")
             selected_mods, mods_locations, confirmed = await create_dropdown(
                 interaction, mods, "mod", multi_select=True, preselected_values=current_mods, timeout=180
             )
+            if debug:
+                print(f"[SELECT_MODS] create_dropdown returned: selected={selected_mods}, confirmed={confirmed}")
 
             if confirmed and selected_mods:
                 await bot.db_instance.update_mods(game_id, mods_locations)
@@ -129,9 +164,20 @@ def register_game_management_commands(bot):
                 await interaction.followup.send("No mods selected. All mods have been removed.", ephemeral=True)
             else:
                 await interaction.followup.send("Selection timed out. No changes were applied.", ephemeral=True)
+        except Exception as e:
+            print(f"[SELECT_MODS] ERROR: {type(e).__name__}: {e}")
+            if debug:
+                import traceback
+                traceback.print_exc()
+            try:
+                await interaction.followup.send(f"An error occurred: {str(e)}", ephemeral=True)
+            except:
+                pass
         finally:
             # Always remove the pending selection when done
             pending_selections.discard(game_id)
+            if debug:
+                print(f"[SELECT_MODS] Removed game {game_id} from pending_selections")
     
     if bot.config and bot.config.get("debug", False):
         print("[GAME_MGMT] Registering new-game command...")
