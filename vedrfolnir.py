@@ -191,6 +191,8 @@ class dbClient:
                 player_columns = [row[1] for row in await cursor.fetchall()]
                 if "chess_clock_time_remaining" not in player_columns:
                     await cursor.execute("ALTER TABLE players ADD COLUMN chess_clock_time_remaining INTEGER DEFAULT 0;")
+                if "nation_name" not in player_columns:
+                    await cursor.execute("ALTER TABLE players ADD COLUMN nation_name TEXT DEFAULT NULL;")
                 await self.connection.commit()
         
         try:
@@ -702,17 +704,18 @@ class dbClient:
         
         return await self._execute_with_retry(_operation)
 
-    async def add_player(self, game_id, player_id, nation, chess_clock_time=0):
+    async def add_player(self, game_id, player_id, nation, chess_clock_time=0, nation_name=None):
         """Insert or update a player in the players table."""
         query = '''
-        INSERT INTO players (game_id, player_id, nation, extensions, currently_claimed, chess_clock_time_remaining)
-        VALUES (:game_id, :player_id, :nation, :extensions, :currently_claimed, :chess_clock_time_remaining)
-        ON CONFLICT (game_id, player_id, nation) DO UPDATE SET 
+        INSERT INTO players (game_id, player_id, nation, extensions, currently_claimed, chess_clock_time_remaining, nation_name)
+        VALUES (:game_id, :player_id, :nation, :extensions, :currently_claimed, :chess_clock_time_remaining, :nation_name)
+        ON CONFLICT (game_id, player_id, nation) DO UPDATE SET
             currently_claimed = :currently_claimed,
-            chess_clock_time_remaining = CASE 
+            chess_clock_time_remaining = CASE
                 WHEN chess_clock_time_remaining = 0 THEN :chess_clock_time_remaining
                 ELSE chess_clock_time_remaining
-            END;
+            END,
+            nation_name = COALESCE(:nation_name, nation_name);
         '''
         params = {
             "game_id": game_id,
@@ -720,7 +723,8 @@ class dbClient:
             "nation": nation,
             "extensions": 0,
             "currently_claimed": True,
-            "chess_clock_time_remaining": chess_clock_time
+            "chess_clock_time_remaining": chess_clock_time,
+            "nation_name": nation_name
         }
 
         try:
@@ -911,24 +915,26 @@ class dbClient:
             result = await cursor.fetchone()
             return result is not None
 
-    async def reclaim_nation(self, game_id: int, player_id: str, nation: str):
+    async def reclaim_nation(self, game_id: int, player_id: str, nation: str, nation_name: str = None):
         """
         Re-claim a nation by setting currently_claimed back to True.
-        
+
         Args:
             game_id (int): The ID of the game.
             player_id (str): The ID of the player.
             nation (str): The name of the nation.
+            nation_name (str): The human-readable nation name.
         """
         query = '''
         UPDATE players
-        SET currently_claimed = TRUE
+        SET currently_claimed = TRUE, nation_name = COALESCE(:nation_name, nation_name)
         WHERE game_id = :game_id AND player_id = :player_id AND nation = :nation;
         '''
         params = {
             "game_id": game_id,
             "player_id": player_id,
-            "nation": nation
+            "nation": nation,
+            "nation_name": nation_name
         }
 
         try:

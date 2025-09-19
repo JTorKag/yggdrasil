@@ -478,6 +478,55 @@ class bifrost:
             return None
 
     @staticmethod
+    async def get_nation_name_from_statusdump(game_id: int, nation_file: str, db_instance, config: dict):
+        """
+        Reads the statusdump file for a given game ID and extracts the nation name
+        for a specific nation file (e.g., "modnat_402" -> "Tsmuwich").
+
+        Args:
+            game_id (int): The ID of the game.
+            nation_file (str): The nation file name (e.g., "modnat_402").
+            db_instance: Database client instance to fetch game information.
+            config (dict): Configuration containing dom_data_folder.
+
+        Returns:
+            str: The nation name, or None if not found.
+        """
+        try:
+            game_info = await db_instance.get_game_info(game_id)
+            if not game_info:
+                return None
+
+            game_name = game_info.get("game_name")
+            savedgames_folder = os.path.join(config.get("dom_data_folder"), "savedgames", game_name)
+            statusdump_file_path = os.path.join(savedgames_folder, "statusdump.txt")
+
+            if not os.path.exists(statusdump_file_path):
+                return None
+
+            with open(statusdump_file_path, "r", encoding="utf-8", errors="ignore") as status_file:
+                content = status_file.read().strip()
+
+            lines = content.split('\n')
+
+            for line in lines:
+                line = line.strip()
+                if line.startswith("Nation\t"):
+                    # Split by tabs - format: Nation	402	402	0	0	9	modnat_402	Tsmuwich	The Seashell Traders
+                    parts = line.split('\t')
+                    if len(parts) >= 8:
+                        # parts[6] is the nation file name (modnat_402)
+                        # parts[7] is the nation name (Tsmuwich)
+                        if parts[6] == nation_file:
+                            return parts[7]
+
+            return None
+
+        except Exception as e:
+            print(f"Error extracting nation name for {nation_file} from game ID {game_id}: {e}")
+            return None
+
+    @staticmethod
     async def backup_saved_game_files(game_id: int, db_instance, config: dict):
         """
         Copies all files from a game's saved game folder to a backup folder,
@@ -1067,21 +1116,77 @@ class bifrost:
             dom_data_folder = config.get("dom_data_folder")
             if not dom_data_folder:
                 return []
-                
+
             savedgames_folder = os.path.join(dom_data_folder, "savedgames", game_name)
             if not os.path.isdir(savedgames_folder):
                 return []
-            
+
             files = [
                 f for f in os.listdir(savedgames_folder)
                 if os.path.isfile(os.path.join(savedgames_folder, f)) and f.endswith(".2h")
             ]
-            
+
             valid_nations = [os.path.basename(file).replace(".2h", "") for file in files]
             return valid_nations
-            
+
         except Exception as e:
             print(f"Error getting nations from 2h files: {e}")
+            return []
+
+    @staticmethod
+    async def get_valid_nations_with_friendly_names(game_id: int, config: dict, db_instance):
+        """Get valid nations from .2h files with their friendly names from statusdump."""
+        try:
+            game_info = await db_instance.get_game_info(game_id)
+            if not game_info:
+                return []
+
+            game_name = game_info['game_name']
+            dom_data_folder = config.get("dom_data_folder")
+            if not dom_data_folder:
+                return []
+
+            # Get valid nations from .2h files
+            nation_files = await bifrost.get_2h_files_by_game_id(game_id, db_instance, config)
+            valid_nations = [os.path.splitext(os.path.basename(nation_file))[0] for nation_file in nation_files]
+
+            # Read statusdump to get friendly names
+            statusdump_path = os.path.join(dom_data_folder, "savedgames", game_name, "statusdump.txt")
+            nations_with_names = []
+
+            try:
+                with open(statusdump_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line.startswith("Nation"):
+                            continue
+
+                        parts = line.split('\t')
+                        if len(parts) >= 8:
+                            nation_file = parts[6]  # e.g., "modnat_402"
+                            nation_name = parts[7]  # e.g., "Tsmuwich"
+
+                            if nation_file in valid_nations:
+                                nations_with_names.append({
+                                    'nation_file': nation_file,
+                                    'nation_name': nation_name,
+                                    'display_name': f"{nation_name} ({nation_file})"
+                                })
+            except Exception as e:
+                # If statusdump reading fails, fall back to just the nation files
+                nations_with_names = [
+                    {
+                        'nation_file': nation,
+                        'nation_name': nation,
+                        'display_name': nation
+                    }
+                    for nation in valid_nations
+                ]
+
+            return nations_with_names
+
+        except Exception as e:
+            print(f"Error getting valid nations with friendly names: {e}")
             return []
 
 

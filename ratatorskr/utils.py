@@ -235,41 +235,58 @@ async def create_dropdown(
 
 async def create_nations_dropdown(
         interaction: discord.Interaction,
-        nations: List[str],
+        nations,  # Can be List[str] or List[Dict] for backwards compatibility
         preselected_nations: List[str] = None,
         debug: bool = False) -> List[str]:
     """Creates a paginated dropdown menu for nation selection and returns the selected nations."""
-    
-    if debug:
-        print(f"[DEBUG] create_nations_dropdown called with {len(nations)} nations, {len(preselected_nations or [])} preselected")
-    
+
+    # Handle both old format (List[str]) and new format (List[Dict])
     if not nations:
         await interaction.response.send_message("No nations available.", ephemeral=True)
         return []
-    
+
+    # Check if we have the new format with nation dictionaries
+    has_friendly_names = isinstance(nations[0], dict) if nations else False
+
+    if debug:
+        print(f"[DEBUG] create_nations_dropdown called with {len(nations)} nations, {len(preselected_nations or [])} preselected, friendly_names={has_friendly_names}")
+
     ITEMS_PER_PAGE = 25
     total_pages = (len(nations) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
-    
+
     preselected_set = set(preselected_nations or [])
-    
+
     if debug:
         print(f"[DEBUG] create_nations_dropdown: {total_pages} pages, {len(preselected_set)} preselected nations")
-    
+
     class NationDropdown(discord.ui.Select):
-        def __init__(self, page_nations: List[str], page_num: int, total_pages: int):
+        def __init__(self, page_nations, page_num: int, total_pages: int):
             max_selectable = min(len(page_nations), ITEMS_PER_PAGE)
+
+            options = []
+            for nation in page_nations:
+                if has_friendly_names:
+                    # New format: use display_name for label, nation_file for value
+                    label = nation['display_name']
+                    value = nation['nation_file']
+                    is_selected = value in preselected_set
+                else:
+                    # Old format: backwards compatibility
+                    label = nation
+                    value = nation
+                    is_selected = nation in preselected_set
+
+                options.append(discord.SelectOption(
+                    label=label,
+                    value=value,
+                    default=is_selected
+                ))
+
             super().__init__(
                 placeholder=f"Choose nations to claim/unclaim... (Page {page_num + 1}/{total_pages})",
                 min_values=0,
                 max_values=max_selectable,
-                options=[
-                    discord.SelectOption(
-                        label=nation,
-                        value=nation,
-                        default=nation in preselected_set
-                    )
-                    for nation in page_nations
-                ],
+                options=options
             )
 
         async def callback(self, interaction: discord.Interaction):
@@ -278,7 +295,7 @@ async def create_nations_dropdown(
             self.view.update_selection(self.values)
 
     class NationView(discord.ui.View):
-        def __init__(self, nations: List[str], total_pages: int):
+        def __init__(self, nations, total_pages: int):
             super().__init__()
             self.nations = nations
             self.total_pages = total_pages
@@ -286,17 +303,25 @@ async def create_nations_dropdown(
             self.selected_nations = set(preselected_nations or [])
             self.is_stopped = asyncio.Event()
             self.confirmed = False
-            
+            self.has_friendly_names = has_friendly_names
+
             self.update_page()
 
         def update_selection(self, new_selections: List[str]):
             # Remove all nations from the current page from selection
             start_idx = self.current_page * ITEMS_PER_PAGE
             end_idx = min(start_idx + ITEMS_PER_PAGE, len(self.nations))
-            current_page_nations = set(self.nations[start_idx:end_idx])
-            
+            page_nations = self.nations[start_idx:end_idx]
+
+            if self.has_friendly_names:
+                # Extract nation_file values for the current page
+                current_page_nations = set(nation['nation_file'] for nation in page_nations)
+            else:
+                # Old format compatibility
+                current_page_nations = set(page_nations)
+
             self.selected_nations = self.selected_nations - current_page_nations
-            
+
             # Add newly selected nations
             self.selected_nations.update(new_selections)
 

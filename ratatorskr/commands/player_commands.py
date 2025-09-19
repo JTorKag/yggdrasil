@@ -51,15 +51,18 @@ def register_player_commands(bot):
 
         try:
             if bot.config and bot.config.get("debug", False):
-                print(f"[DEBUG] claim_command calling bifrost.get_valid_nations_from_files for game {game_id}")
-                
-            valid_nations = await bifrost.get_valid_nations_from_files(game_id, bot.config, bot.db_instance)
+                print(f"[DEBUG] claim_command calling bifrost.get_valid_nations_with_friendly_names for game {game_id}")
+
+            nations_with_names = await bifrost.get_valid_nations_with_friendly_names(game_id, bot.config, bot.db_instance)
             if bot.config and bot.config.get("debug", False):
-                print(f"[DEBUG] claim_command got {len(valid_nations) if valid_nations else 0} valid nations")
-                
-            if not valid_nations:
+                print(f"[DEBUG] claim_command got {len(nations_with_names) if nations_with_names else 0} valid nations")
+
+            if not nations_with_names:
                 await interaction.response.send_message("No valid nations found for this game.", ephemeral=True)
                 return
+
+            # Extract just the nation files for validation logic
+            valid_nations = [nation['nation_file'] for nation in nations_with_names]
 
             if bot.config and bot.config.get("debug", False):
                 print(f"[DEBUG] claim_command getting current nations for player {interaction.user.id}")
@@ -93,11 +96,13 @@ def register_player_commands(bot):
             if bot.config and bot.config.get("debug", False):
                 print(f"[DEBUG] claim_command calling create_nations_dropdown")
 
-            selected_nations = await create_nations_dropdown(interaction, valid_nations, current_nation_names, bot.config and bot.config.get("debug", False))
-            
+            selected_nations = await create_nations_dropdown(interaction, nations_with_names, current_nation_names, bot.config and bot.config.get("debug", False))
+
             if bot.config and bot.config.get("debug", False):
                 print(f"[DEBUG] claim_command dropdown returned {len(selected_nations) if selected_nations else 0} selected nations: {selected_nations}")
-            
+                print(f"[DEBUG] current_nation_names: {current_nation_names}")
+                print(f"[DEBUG] valid_nations: {valid_nations}")
+
             # Allow empty selection if player has current nations (means they want to unclaim all)
             if not selected_nations and not current_nation_names:
                 await interaction.followup.send("No nations selected.", ephemeral=True)
@@ -130,8 +135,14 @@ def register_player_commands(bot):
                         errors.append(f"Failed to unclaim {nation_to_unclaim}: {e}")
 
             for nation_name in selected_nations:
+                if bot.config and bot.config.get("debug", False):
+                    print(f"[DEBUG] Processing selected nation: {nation_name}")
+                    print(f"[DEBUG] Is {nation_name} in valid_nations? {nation_name in valid_nations}")
+
                 if nation_name not in valid_nations:
                     errors.append(f"{nation_name} is not a valid nation for this game.")
+                    if bot.config and bot.config.get("debug", False):
+                        print(f"[DEBUG] Nation {nation_name} not found in valid_nations: {valid_nations}")
                     continue
 
                 currently_owns = await bot.db_instance.check_player_nation(game_id, str(interaction.user.id), nation_name)
@@ -141,17 +152,20 @@ def register_player_commands(bot):
                 previously_owned = await bot.db_instance.check_player_previously_owned(game_id, str(interaction.user.id), nation_name)
                 
                 try:
+                    # Get the human-readable nation name from statusdump
+                    human_nation_name = await bifrost.get_nation_name_from_statusdump(game_id, nation_name, bot.db_instance, bot.config)
+
                     if previously_owned:
-                        await bot.db_instance.reclaim_nation(game_id, str(interaction.user.id), nation_name)
+                        await bot.db_instance.reclaim_nation(game_id, str(interaction.user.id), nation_name, human_nation_name)
                         results.append(f"✅ **{interaction.user.display_name}** re-claimed {nation_name}")
                         if bot.config and bot.config.get("debug", False):
                             print(f"Player {interaction.user.name} reclaimed nation {nation_name} in game {game_id}.")
                     else:
-                        await bot.db_instance.add_player(game_id, str(interaction.user.id), nation_name, chess_clock_time)
+                        await bot.db_instance.add_player(game_id, str(interaction.user.id), nation_name, chess_clock_time, human_nation_name)
                         results.append(f"✅ **{interaction.user.display_name}** claimed {nation_name}")
                         if bot.config and bot.config.get("debug", False):
                             print(f"Added player {interaction.user.name} as {nation_name} in game {game_id}.")
-                        
+
                         chess_clock_time = 0
                         
                 except Exception as e:
@@ -375,18 +389,23 @@ def register_player_commands(bot):
 
         try:
             print(f"Fetching pretenders for game ID: {game_id}")
-            
-            valid_nations = await bifrost.get_valid_nations_from_files(game_id, bot.config, bot.db_instance)
+
+            # Get nations with friendly names
+            nations_with_names = await bifrost.get_valid_nations_with_friendly_names(game_id, bot.config, bot.db_instance)
 
             claimed_nations = await bot.db_instance.get_claimed_nations(game_id)
-            
+
             # Build description instead of fields to avoid 25-field limit
             description_lines = []
             claimed_count = 0
             unclaimed_count = 0
-            
-            for nation in valid_nations:
-                claimants = claimed_nations.get(nation, [])
+
+            for nation_info in nations_with_names:
+                nation_file = nation_info['nation_file']
+                nation_name = nation_info['nation_name']
+                display_text = f"{nation_name} ({nation_file})" if nation_name != nation_file else nation_file
+
+                claimants = claimed_nations.get(nation_file, [])
                 if claimants:
                     resolved_claimants = []
                     for player_id in claimants:
@@ -395,10 +414,10 @@ def register_player_commands(bot):
                             resolved_claimants.append(user.display_name)
                         else:
                             resolved_claimants.append(f"Unknown ({player_id})")
-                    description_lines.append(f"**{nation}**: {', '.join(resolved_claimants)}")
+                    description_lines.append(f"**{display_text}**: {', '.join(resolved_claimants)}")
                     claimed_count += 1
                 else:
-                    description_lines.append(f"**{nation}**: *Unclaimed*")
+                    description_lines.append(f"**{display_text}**: *Unclaimed*")
                     unclaimed_count += 1
             
             # Split into multiple embeds if description gets too long (Discord limit ~4096 chars)
