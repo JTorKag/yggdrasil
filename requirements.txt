@@ -3,3 +3,4 @@ aiosqlite
 watchdog
 fastapi
 uvicorn
+sqlite-web
