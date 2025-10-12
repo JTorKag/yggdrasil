@@ -52,6 +52,20 @@ This was born from both a technical challenge ("can I automate this complex work
 - **FastAPI Integration**: Supports pre-execution backups and post-execution notifications for game turns.
 - **Backup System**: Ensures game files are periodically backed up safely.
 - **Extensibility**: Modular structure allows for easy addition of new commands and features.
+- **Friendly Nation Names**: All nation selection interfaces now display human-readable nation names alongside technical identifiers:
+- **Claim dropdowns** show "Tsmuwich (modnat_402)" instead of just "modnat_402"
+- **Pretenders command** displays "Ulm (mid_ulm): Player Name" for better readability
+- **Real-time parsing** of statusdump.txt ensures names are always current and accurate
+
+- **Advanced Game Configuration**: The `/extra-game-settings` command provides access to 19+ advanced Dominions 6 parameters:
+  - Research rate (Slow, Normal, Fast, Very Fast)
+  - Diplomacy settings (Disabled, Weak, Binding)
+  - Score graphs, event rarity, magic site frequency, and more
+  - Autocomplete suggestions for all parameters with user-friendly names
+
+- **Improved Navigation**: Browse commands use paginated dropdowns without confirmation requirements:
+  - `/view-maps` and `/view-mods` let you explore available content
+  - Enhanced file organization with emoji and description support
 
 ---
 
@@ -216,23 +230,6 @@ Commands are organized by function and include permission restrictions to ensure
 #### **Administrative Commands**
 - `/delete-lobby` - Permanently delete game lobby and role *[Game Channel, Owner/Admin]*
 - `/reset-game-started` - Reset game started flag *[Game Channel, Admin Only]*
-
-#### **Enhanced User Experience Features**
-
-**Friendly Nation Names**: All nation selection interfaces now display human-readable nation names alongside technical identifiers:
-- **Claim dropdowns** show "Tsmuwich (modnat_402)" instead of just "modnat_402"
-- **Pretenders command** displays "Ulm (mid_ulm): Player Name" for better readability
-- **Real-time parsing** of statusdump.txt ensures names are always current and accurate
-
-**Advanced Game Configuration**: The `/extra-game-settings` command provides access to 19+ advanced Dominions 6 parameters:
-- Research rate (Slow, Normal, Fast, Very Fast)
-- Diplomacy settings (Disabled, Weak, Binding)
-- Score graphs, event rarity, magic site frequency, and more
-- Autocomplete suggestions for all parameters with user-friendly names
-
-**Improved Navigation**: Browse commands use paginated dropdowns without confirmation requirements:
-- `/view-maps` and `/view-mods` let you explore available content
-- Enhanced file organization with emoji and description support
 
 ---
 
