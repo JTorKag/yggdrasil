@@ -308,6 +308,7 @@ class nidhogg:
     async def force_game_host(game_id: int, config: dict, db_instance):
         """
         Writes a `domcmd` file to the live game folder to automatically start the game.
+        Creates a backup before hosting, just like normal timer-based hosting.
 
         Args:
             game_id (int): The game ID.
@@ -318,6 +319,15 @@ class nidhogg:
             Exception: If any error occurs during the execution.
         """
         try:
+            # Create backup before hosting (same as normal turn progression)
+            from bifrost import bifrost
+            try:
+                await bifrost.backup_saved_game_files(game_id, db_instance, config)
+                print(f"Backup completed for force host of game ID {game_id}")
+            except Exception as backup_error:
+                print(f"Warning: Backup failed for force host of game ID {game_id}: {backup_error}")
+                # Continue with force host even if backup fails
+
             dom_data_folder = config.get("dom_data_folder")
             if not dom_data_folder:
                 raise ValueError("Configuration missing 'dom_data_folder'.")

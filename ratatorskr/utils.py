@@ -156,19 +156,19 @@ async def create_dropdown(
                 
                 # Add navigation buttons if multiple pages
                 if self.total_pages > 1:
-                    # Previous page button
-                    prev_button = discord.ui.Button(label="Previous", style=discord.ButtonStyle.secondary, disabled=self.current_page == 0)
+                    # Previous page button (row 1)
+                    prev_button = discord.ui.Button(label="Previous", style=discord.ButtonStyle.secondary, disabled=self.current_page == 0, row=1)
                     prev_button.callback = self.previous_page
                     self.add_item(prev_button)
                     
-                    # Next page button
-                    next_button = discord.ui.Button(label="Next", style=discord.ButtonStyle.secondary, disabled=self.current_page >= self.total_pages - 1)
+                    # Next page button (row 1)
+                    next_button = discord.ui.Button(label="Next", style=discord.ButtonStyle.secondary, disabled=self.current_page >= self.total_pages - 1, row=1)
                     next_button.callback = self.next_page
                     self.add_item(next_button)
                 
-                # Confirm button (only add if not view_only mode)
+                # Confirm button (only add if not view_only mode) - force to row 2 for proper mobile layout
                 if not view_only:
-                    confirm_button = discord.ui.Button(label="Confirm Selection", style=discord.ButtonStyle.green)
+                    confirm_button = discord.ui.Button(label="Confirm Selection", style=discord.ButtonStyle.green, row=2)
                     confirm_button.callback = self.confirm_selection
                     self.add_item(confirm_button)
 
@@ -338,18 +338,18 @@ async def create_nations_dropdown(
             
             # Add navigation buttons
             if self.total_pages > 1:
-                # Previous page button
-                prev_button = discord.ui.Button(label="Previous", style=discord.ButtonStyle.secondary, disabled=self.current_page == 0)
+                # Previous page button (row 1)
+                prev_button = discord.ui.Button(label="Previous", style=discord.ButtonStyle.secondary, disabled=self.current_page == 0, row=1)
                 prev_button.callback = self.previous_page
                 self.add_item(prev_button)
                 
-                # Next page button
-                next_button = discord.ui.Button(label="Next", style=discord.ButtonStyle.secondary, disabled=self.current_page >= self.total_pages - 1)
+                # Next page button (row 1)
+                next_button = discord.ui.Button(label="Next", style=discord.ButtonStyle.secondary, disabled=self.current_page >= self.total_pages - 1, row=1)
                 next_button.callback = self.next_page
                 self.add_item(next_button)
             
-            # Confirm button
-            confirm_button = discord.ui.Button(label="Confirm Selection", style=discord.ButtonStyle.green)
+            # Confirm button - force to row 2 for proper mobile layout
+            confirm_button = discord.ui.Button(label="Confirm Selection", style=discord.ButtonStyle.green, row=2)
             confirm_button.callback = self.confirm_selection
             self.add_item(confirm_button)
 
