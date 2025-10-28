@@ -123,15 +123,29 @@ printf "{password}\\n{password}\\n"
                 async def sqlite_timeout():
                     await asyncio.sleep(1800)  # 30 minutes
                     if hasattr(bot, 'sqlite_web_process') and bot.sqlite_web_process and bot.sqlite_web_process.returncode is None:
-                        bot.sqlite_web_process.terminate()
+                        # Kill the entire process group to ensure all child processes are terminated
+                        import signal as sig
                         try:
+                            os.killpg(os.getpgid(bot.sqlite_web_process.pid), sig.SIGTERM)
                             await asyncio.wait_for(bot.sqlite_web_process.wait(), timeout=5.0)
+                        except (ProcessLookupError, OSError):
+                            # Process already dead or process group doesn't exist
+                            pass
                         except asyncio.TimeoutError:
-                            bot.sqlite_web_process.kill()
-                            await bot.sqlite_web_process.wait()
-                        bot.sqlite_web_process = None
-                        if hasattr(bot, 'sqlite_timeout_task'):
+                            # Force kill if still running
+                            try:
+                                os.killpg(os.getpgid(bot.sqlite_web_process.pid), sig.SIGKILL)
+                                await bot.sqlite_web_process.wait()
+                            except (ProcessLookupError, OSError):
+                                pass
+                        
+                        # Cancel timeout task
+                        if hasattr(bot, 'sqlite_timeout_task') and bot.sqlite_timeout_task:
+                            bot.sqlite_timeout_task.cancel()
                             bot.sqlite_timeout_task = None
+                        
+                        bot.sqlite_web_process = None
+                        
                         # Notify in primary channel
                         primary_channels = bot.config.get("primary_bot_channel", [])
                         if primary_channels:
