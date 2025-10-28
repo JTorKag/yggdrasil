@@ -247,10 +247,18 @@ class TimerManager:
                     )
                     embeds.append(undone_embed)
 
+                # Check if we should shame a single remaining player
+                from ratatorskr.commands.meme_commands import should_shame_player, generate_skeletor_image
+                should_shame, player_name, nation = await should_shame_player(
+                    self.discord_bot, game_id, undone_nations, played_but_not_finished
+                )
+
             except Exception as status_error:
                 # If we can't get the status, just send the warning without undone info
                 if self.config and self.config.get("debug", False):
                     print(f"[DEBUG] Failed to get undone status for timer warning: {status_error}")
+                should_shame = False
+                player_name = None
 
             # Check if there's an associated role to ping
             associated_role_id = game_info.get("role_id")
@@ -259,6 +267,17 @@ class TimerManager:
                 await channel.send(content=role_mention, embeds=embeds)
             else:
                 await channel.send(embeds=embeds)
+
+            # Send Skeletor shame image after embeds if applicable
+            if should_shame and player_name:
+                try:
+                    # Generate Skeletor shame image
+                    skeletor_buffer = generate_skeletor_image(player_name)
+                    skeletor_file = discord.File(skeletor_buffer, filename="skeletor_shame.png")
+                    await channel.send(file=skeletor_file)
+                except Exception as shame_error:
+                    if self.config and self.config.get("debug", False):
+                        print(f"[DEBUG] Error generating Skeletor shame image: {shame_error}")
             if self.config and self.config.get("debug", False):
                 print(f"[DEBUG] Timer warning sent to game ID {game_id}")
         except Exception as e:

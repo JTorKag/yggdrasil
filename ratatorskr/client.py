@@ -15,7 +15,8 @@ from .commands import (
     player_commands,
     admin_commands,
     file_commands,
-    info_commands
+    info_commands,
+    meme_commands
 )
 
 
@@ -136,6 +137,9 @@ class discordClient(discord.Client):
             print("[CLIENT] Registering info commands...")
         info_commands.register_info_commands(self)
         if self.config and self.config.get("debug", False):
+            print("[CLIENT] Registering meme commands...")
+        meme_commands.register_meme_commands(self)
+        if self.config and self.config.get("debug", False):
             print("[CLIENT] All commands registered")
         
         if self.config and self.config.get("debug", False):
@@ -151,3 +155,39 @@ class discordClient(discord.Client):
         print("[INFO] Bot setup complete - terminal input is now ready!")
         if self.config and self.config.get("debug", False):
             print("[CLIENT] Setup hook complete!")
+
+    async def on_message(self, message):
+        """
+        Handle incoming messages for non-slash commands.
+        """
+        # Ignore messages from the bot itself
+        if message.author == self.user:
+            return
+
+        # Check for !skeletor command
+        if message.content.startswith("!skeletor "):
+            text = message.content[10:].strip()  # Remove "!skeletor " prefix
+
+            if not text:
+                await message.channel.send("Usage: `!skeletor <text>`")
+                return
+
+            # Sanitize: limit length to prevent abuse
+            if len(text) > 50:
+                await message.channel.send("Error: Text is too long (max 50 characters)")
+                return
+
+            try:
+                from .commands.meme_commands import generate_skeletor_image
+
+                # Generate the image
+                buffer = generate_skeletor_image(text)
+
+                # Send the image
+                file = discord.File(buffer, filename="skeletor_meme.png")
+                await message.channel.send(file=file)
+
+            except FileNotFoundError as e:
+                await message.channel.send(f"Error: {str(e)}")
+            except Exception as e:
+                await message.channel.send(f"Error creating Skeletor meme: {str(e)}")

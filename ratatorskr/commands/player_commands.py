@@ -640,7 +640,27 @@ def register_player_commands(bot):
                 )
                 embeds.append(undone_embed)
 
+            # Check if we should shame a single remaining player
+            from .meme_commands import should_shame_player, generate_skeletor_image
+
+            print(f"[DEBUG] Checking shame - undone: {undone_nations}, unfinished: {played_but_not_finished}")
+            should_shame, player_name, nation = await should_shame_player(
+                bot, game_id, undone_nations, played_but_not_finished
+            )
+            print(f"[DEBUG] Shame result: should_shame={should_shame}, player_name={player_name}, nation={nation}")
+
+            # Send embeds first
             await interaction.followup.send(embeds=embeds)
+
+            # Then send Skeletor shame image if applicable
+            if should_shame and player_name:
+                try:
+                    # Generate Skeletor shame image
+                    skeletor_buffer = generate_skeletor_image(player_name)
+                    skeletor_file = discord.File(skeletor_buffer, filename="skeletor_shame.png")
+                    await interaction.followup.send(file=skeletor_file)
+                except Exception as e:
+                    print(f"Error generating Skeletor shame image: {e}")
 
         except Exception as e:
             await interaction.followup.send(f"Error querying turn for game id:{game_id}\n{str(e)}")

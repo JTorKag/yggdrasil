@@ -4,3 +4,4 @@ watchdog
 fastapi
 uvicorn
 sqlite-web
+Pillow
