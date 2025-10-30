@@ -359,9 +359,16 @@ async def main():
                         channel = await discordBot.fetch_channel(int(channel_id))
                     
                     if channel:
-                        message = f"🛑 **Service Maintenance** 🛑\n\nThe game service is being shut down for maintenance. "
-                        message += f"**{game_name}** will be temporarily unavailable until the service is restarted."
-                        
+                        embed = discord.Embed(
+                            title="🛑 Service Maintenance",
+                            description=(
+                                f"The game service is being shut down for maintenance.\n\n"
+                                f"**{game_name}** will be temporarily unavailable until the service is restarted."
+                            ),
+                            color=discord.Color.red()
+                        )
+
+                        owner_mention = None
                         if game_owner:
                             try:
                                 guild = channel.guild
@@ -370,13 +377,16 @@ async def main():
                                     if member.name == game_owner:
                                         owner_member = member
                                         break
-                                
+
                                 if owner_member:
-                                    message = f"{owner_member.mention}\n\n{message}"
+                                    owner_mention = owner_member.mention
                             except:
                                 pass
-                        
-                        await channel.send(message)
+
+                        if owner_mention:
+                            await channel.send(content=owner_mention, embed=embed)
+                        else:
+                            await channel.send(embed=embed)
                         print(f"[INFO] Sent shutdown notification to {game_name}")
                         
             except Exception as e:

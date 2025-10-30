@@ -1393,7 +1393,18 @@ class bifrost:
             backup_path = Path(backup_data_folder) / str(game_id)
             
             files_to_zip = []
-            
+
+            # Get pretender files from backup pretenders folder
+            pretenders_backup_path = backup_path / "pretenders"
+            if pretenders_backup_path.exists():
+                for nation in player_nations:
+                    pretender_files = list(pretenders_backup_path.glob(f"*{nation}*.2h"))
+                    for file_path in pretender_files:
+                        if file_path.exists():
+                            # Put pretender files in "pretenders" folder in the zip
+                            archive_name = f"pretenders/{file_path.name}"
+                            files_to_zip.append((file_path, archive_name))
+
             # Get files from backup folders (historical turns)
             if backup_path.exists():
                 for turn_folder in sorted(backup_path.glob("turn_*")):
@@ -1402,7 +1413,7 @@ class bifrost:
                             # Look for .2h and .trn files in this turn folder
                             pretender_files = list(turn_folder.glob(f"*{nation}*.2h"))
                             turn_files = list(turn_folder.glob(f"*{nation}*.trn"))
-                            
+
                             for file_path in pretender_files + turn_files:
                                 if file_path.exists():
                                     # Create archive path with turn folder name

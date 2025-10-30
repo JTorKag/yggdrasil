@@ -91,6 +91,9 @@ def generate_skeletor_image(text: str) -> io.BytesIO:
     Raises:
         FileNotFoundError: If the skeletor.png base image is not found
     """
+    # Convert text to uppercase for maximum shaming impact
+    text = text.upper()
+
     # Load the base image
     base_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "resources", "skeletor.png")
 

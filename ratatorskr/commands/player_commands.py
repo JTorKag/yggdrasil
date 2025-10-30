@@ -201,20 +201,42 @@ def register_player_commands(bot):
                 if bot.config and bot.config.get("debug", False):
                     print(f"Removed role '{role_name}' from user {interaction.user.name}.")
 
-            message_parts = []
-            if results:
-                message_parts.append("\n".join(results))
+            # Build embed response
+            if results or errors or role_message:
+                embed = discord.Embed(
+                    title="Nation Claims Updated",
+                    color=discord.Color.green() if not errors else discord.Color.orange()
+                )
+
+                if results:
+                    embed.add_field(
+                        name="Changes",
+                        value="\n".join(results),
+                        inline=False
+                    )
+
                 if role_message:
-                    message_parts.append(role_message)
-                
+                    embed.add_field(
+                        name="Role Update",
+                        value=role_message,
+                        inline=False
+                    )
 
-            if errors:
-                message_parts.append(f"\n**Errors:**\n" + "\n".join(errors))
+                if errors:
+                    embed.add_field(
+                        name="Errors",
+                        value="\n".join(errors),
+                        inline=False
+                    )
 
-            if message_parts:
-                await interaction.followup.send("\n\n".join(message_parts))
+                await interaction.followup.send(embed=embed)
             else:
-                await interaction.followup.send("You already own all selected nations.")
+                embed = discord.Embed(
+                    title="No Changes",
+                    description="You already own all selected nations.",
+                    color=discord.Color.blue()
+                )
+                await interaction.followup.send(embed=embed)
                 
         except Exception as e:
             await interaction.followup.send(f"Failed to process nation claims: {e}", ephemeral=True)
@@ -649,16 +671,19 @@ def register_player_commands(bot):
             )
             print(f"[DEBUG] Shame result: should_shame={should_shame}, player_name={player_name}, nation={nation}")
 
-            # Send embeds first
-            await interaction.followup.send(embeds=embeds)
+            # Send embeds using channel.send (like 1hr timer does) for better message grouping
+            await interaction.channel.send(embeds=embeds)
 
-            # Then send Skeletor shame image if applicable
+            # Delete the "thinking" message from the deferred response
+            await interaction.delete_original_response()
+
+            # Send Skeletor shame image after embeds if applicable (using channel.send like 1hr timer)
             if should_shame and player_name:
                 try:
                     # Generate Skeletor shame image
                     skeletor_buffer = generate_skeletor_image(player_name)
                     skeletor_file = discord.File(skeletor_buffer, filename="skeletor_shame.png")
-                    await interaction.followup.send(file=skeletor_file)
+                    await interaction.channel.send(file=skeletor_file)
                 except Exception as e:
                     print(f"Error generating Skeletor shame image: {e}")
 

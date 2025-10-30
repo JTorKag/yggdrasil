@@ -10,7 +10,40 @@ from ..utils import descriptive_time_breakdown
 
 def register_info_commands(bot):
     """Register all information commands to the bot's command tree."""
-    
+
+    @bot.tree.command(
+        name="help",
+        description="Get help with Yggdrasil commands and documentation.",
+        guild=discord.Object(id=bot.guild_id)
+    )
+    @require_bot_channel(bot.config)
+    async def help_command(interaction: discord.Interaction):
+        """Provides a link to the command documentation on GitHub."""
+        embed = discord.Embed(
+            title="📚 Yggdrasil Help",
+            description=(
+                "For a complete list of available commands and their usage, "
+                "please visit the Yggdrasil documentation on GitHub."
+            ),
+            color=discord.Color.blue()
+        )
+
+        embed.add_field(
+            name="Command Documentation",
+            value="[View Discord Slash Commands](https://github.com/JTorKag/yggdrasil?tab=readme-ov-file#discord-slash-commands)",
+            inline=False
+        )
+
+        embed.add_field(
+            name="Full Repository",
+            value="[Yggdrasil GitHub Repository](https://github.com/JTorKag/yggdrasil)",
+            inline=False
+        )
+
+        embed.set_footer(text="All commands and documentation are maintained in the GitHub repository.")
+
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
     @bot.tree.command(
         name="game-info",
         description="Fetches and displays details about the game in this channel.",
@@ -156,6 +189,16 @@ def register_info_commands(bot):
                     inline=False,
                 )
 
+            # Extract just the .dm filenames from mods (everything after the last /)
+            mods_raw = game_info['game_mods']
+            if mods_raw and mods_raw != "None":
+                # Split by comma, extract filename after /, rejoin
+                mod_list = [mod.strip() for mod in mods_raw.split(',')]
+                mod_names = [mod.split('/')[-1] if '/' in mod else mod for mod in mod_list]
+                mods_display = ', '.join(mod_names)
+            else:
+                mods_display = game_info['game_mods']
+
             embed.add_field(
                 name="Basic Information",
                 value=(
@@ -167,7 +210,7 @@ def register_info_commands(bot):
                     f"**Game Owner**: {game_info['game_owner']}\n"
                     f"**Version**: {game_info['creation_version']}\n"
                     f"**Creation Date**: {game_info['creation_date']}\n"
-                    f"🔧 **Mods**: {game_info['game_mods']}\n"
+                    f"🔧 **Mods**: {mods_display}\n"
                     f"🗺 **Map**: {game_info['game_map']}\n"
                 ),
                 inline=False,
@@ -293,6 +336,7 @@ def register_info_commands(bot):
             await interaction.followup.send(f"An error occurred: {e}", ephemeral=True)
 
     return [
+        help_command,
         game_info_command,
         get_version_command,
         list_active_games_command

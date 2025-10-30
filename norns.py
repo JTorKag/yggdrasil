@@ -414,11 +414,10 @@ class TimerManager:
             if associated_role_id:
                 role_mention = f"<@&{associated_role_id}>"
 
-            import discord
             embed = discord.Embed(
                 title="Game Started! - Turn 1",
                 description=(
-                    f"The game has begun! All nations have been set up.\n"
+                    f"The game has begun! Good luck, have fun!\n"
                     f"Next turn deadline:\n{discord_timestamp} in {time_breakdown}"
                 ),
                 color=discord.Color.green()
@@ -533,7 +532,6 @@ class TimerManager:
                 except:
                     pass
 
-            import discord
             embed = discord.Embed(
                 title="⚠️ Game Process Died",
                 description=(

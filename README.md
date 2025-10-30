@@ -37,7 +37,7 @@ Yggdrasil operates through several interconnected components working together:
 6. **Backup & Recovery**: Game states are backed up before each turn with rollback capability
 7. **Notifications**: Discord alerts keep players informed of game progress and deadlines
 
-This was born from both a technical challenge ("can I automate this complex workflow?") and a practical need to solve the pain points of hosting Dominions 6 games on Discord servers. Built from the ground up to be community-deployable, allowing anyone to spin up their own automated hosting service.
+This was born from both a technical challenge and a practical need for hosting Dominions 6 games on Discord servers. Built from the ground up to be community-deployable, allowing anyone to spin up their own automated hosting service.
 
 **Note**: While functional and actively used, this system is still evolving. Deploy at your own discretion and feel free to reach out for help with setup or troubleshooting. 
 
@@ -89,24 +89,28 @@ This was born from both a technical challenge ("can I automate this complex work
 Install the following dependencies to ensure the application works as intended.
 
 #### **Python Libraries**
-Set up a virtual environment and install the required libraries:
-```bash
-python3 -m venv ygg-venv
-source ygg-venv/bin/activate
-pip install -r requirements.txt
+Set up a virtual environment with the required libraries:
+```
+discord.py
+aiosqlite
+watchdog
+fastapi
+uvicorn
+sqlite-web
+Pillow
 ```
 
 #### **System Packages**
-Install the required system packages using `apt`:
+Required system packages.
 ```bash
-sudo apt install screen
-sudo apt install curl
-sudo apt install lsb-release
-sudo apt install libgl1
-sudo apt install libglu1-mesa
-sudo apt install libsdl2-2.0-0
+screen
+curl
+lsb-release
+libgl1
+libglu1-mesa
+libsdl2-2.0-0
 ```
-These are mostly just to run the dom binary.
+These mostly are just to run the dom binar with the exception of screen.
 
 ---
 
@@ -123,8 +127,18 @@ These are mostly just to run the dom binary.
    source ygg-venv/bin/activate
    pip install -r requirements.txt
    ```
+   
+3. Install the required system packages using `apt`:
+   ```bash
+   sudo apt install screen
+   sudo apt install curl
+   sudo apt install lsb-release
+   sudo apt install libgl1
+   sudo apt install libglu1-mesa
+   sudo apt install libsdl2-2.0-0
+   ```
 
-3. Configure the application:
+4. Configure the application:
    - Create a configuration file (e.g., `config.json`). "Use template provided"
    - Use absolute folder paths.
    - Add required details such as:
@@ -132,7 +146,7 @@ These are mostly just to run the dom binary.
      - Guild ID
      - Dominions folder path
 
-4. Start the bot:
+5. Start the bot:
    ```bash
    python yggdrasil.py
    ```
@@ -221,11 +235,12 @@ Commands are organized by function and include permission restrictions to ensure
 - `/chess-clock-setup` - Configure individual player time banks *[Game Channel, Owner/Admin]*
 - `/player-extension-rules` - Set per-player extension limits *[Game Channel, Owner/Admin]*
 
-#### **Game Information & Status**
+#### **Information & Status**
 - `/game-info` - Display detailed game settings and status *[Game Channel]*
 - `/undone` - Show which players haven't taken their turn *[Game Channel]*
 - `/list-active-games` - View all running games *[Main Bot Channel]*
 - `/get-version` - Show Dominions server version *[Main Bot Channel]*
+- `/help` - Link to README's Discord Slash Commands section. (Where you are now) *[Main Bot Channel, Game Channel]*
 
 #### **Administrative Commands**
 - `/delete-lobby` - Permanently delete game lobby and role *[Game Channel, Owner/Admin]*
