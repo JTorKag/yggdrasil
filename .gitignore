@@ -22,9 +22,9 @@ config.json
 #db
 *.db
 
-# remove notes for full release
-notes/
+#ai
 .claude
+CLAUDE.md
 
 #other
 ratatorskr_original.py
