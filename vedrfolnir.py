@@ -202,8 +202,6 @@ class dbClient:
                 
                 await cursor.execute("PRAGMA table_info(players)")
                 player_columns = [row[1] for row in await cursor.fetchall()]
-                if "chess_clock_time_remaining" not in player_columns:
-                    await cursor.execute("ALTER TABLE players ADD COLUMN chess_clock_time_remaining INTEGER DEFAULT 0;")
                 if "nation_name" not in player_columns:
                     await cursor.execute("ALTER TABLE players ADD COLUMN nation_name TEXT DEFAULT NULL;")
                 if "chess_timer_id" not in player_columns:
