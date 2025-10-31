@@ -671,13 +671,10 @@ def register_player_commands(bot):
             )
             print(f"[DEBUG] Shame result: should_shame={should_shame}, player_name={player_name}, nation={nation}")
 
-            # Send embeds using channel.send (like 1hr timer does) for better message grouping
-            await interaction.channel.send(embeds=embeds)
+            # Send embeds using followup
+            await interaction.followup.send(embeds=embeds)
 
-            # Delete the "thinking" message from the deferred response
-            await interaction.delete_original_response()
-
-            # Send Skeletor shame image after embeds if applicable (using channel.send like 1hr timer)
+            # Send Skeletor shame image as separate message if applicable
             if should_shame and player_name:
                 try:
                     # Generate Skeletor shame image

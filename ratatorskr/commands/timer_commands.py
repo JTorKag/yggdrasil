@@ -201,29 +201,87 @@ def register_timer_commands(bot):
                 next_turn_text = "**Next Turn**: Timer is paused"
 
             if time_value >= 0:
-                message = f"Timer for game ID {game_id} has been extended by {formatted_time} {time_unit}."
-                message += f"\n🕐 **Time Remaining**: {remaining_readable}"
-                message += f"\n{next_turn_text}"
-                
+                embed = discord.Embed(
+                    title="⏰ Timer Extended",
+                    description=f"Timer extended by **{formatted_time} {time_unit}**",
+                    color=discord.Color.green()
+                )
+
+                embed.add_field(
+                    name="Time Remaining",
+                    value=remaining_readable,
+                    inline=False
+                )
+
+                if new_remaining_time and timer_info["timer_running"]:
+                    current_time = datetime.now(timezone.utc)
+                    future_time = current_time + timedelta(seconds=new_remaining_time)
+                    discord_timestamp = f"<t:{int(future_time.timestamp())}:F>"
+                    embed.add_field(
+                        name="Next Turn",
+                        value=discord_timestamp,
+                        inline=False
+                    )
+                else:
+                    embed.add_field(
+                        name="Next Turn",
+                        value="Timer is paused",
+                        inline=False
+                    )
+
                 if used_chess_clock_time and not owner_exceeded_limit and not admin_exceeded_limit:
                     updated_time_remaining = await bot.db_instance.get_player_chess_clock_time(game_id, str(interaction.user.id))
                     if game_info.get("game_type", "").lower() == "blitz":
                         remaining_display = f"{updated_time_remaining / 60:.1f} minutes"
                     else:
                         remaining_display = f"{updated_time_remaining / 3600:.1f} hours"
-                    message += f"\n⏱️ Your remaining chess clock time: {remaining_display}"
-                
+                    embed.add_field(
+                        name="♟️ Your Chess Clock Time",
+                        value=remaining_display,
+                        inline=False
+                    )
+
+                footer_text = f"Game ID: {game_id}"
                 if owner_exceeded_limit:
-                    message += f"\n⚠️ **Game Owner extended beyond their chess clock limit.**"
+                    footer_text = "⚠️ Game Owner extended beyond their chess clock limit"
                 elif admin_exceeded_limit:
-                    message += f"\n⚠️ **Admin extended beyond their chess clock limit.**"
-                
-                await interaction.followup.send(message)
+                    footer_text = "⚠️ Admin extended beyond their chess clock limit"
+
+                embed.set_footer(text=footer_text)
+
+                await interaction.followup.send(embed=embed)
             else:
-                message = f"Timer for game ID {game_id} has been reduced by {abs(time_value):g} {time_unit}."
-                message += f"\n🕐 **Time Remaining**: {remaining_readable}"
-                message += f"\n{next_turn_text}"
-                await interaction.followup.send(message)
+                embed = discord.Embed(
+                    title="⏰ Timer Reduced",
+                    description=f"Timer reduced by **{abs(time_value):g} {time_unit}**",
+                    color=discord.Color.orange()
+                )
+
+                embed.add_field(
+                    name="Time Remaining",
+                    value=remaining_readable,
+                    inline=False
+                )
+
+                if new_remaining_time and timer_info["timer_running"]:
+                    current_time = datetime.now(timezone.utc)
+                    future_time = current_time + timedelta(seconds=new_remaining_time)
+                    discord_timestamp = f"<t:{int(future_time.timestamp())}:F>"
+                    embed.add_field(
+                        name="Next Turn",
+                        value=discord_timestamp,
+                        inline=False
+                    )
+                else:
+                    embed.add_field(
+                        name="Next Turn",
+                        value="Timer is paused",
+                        inline=False
+                    )
+
+                embed.set_footer(text=f"Game ID: {game_id}")
+
+                await interaction.followup.send(embed=embed)
 
         except Exception as e:
             await interaction.followup.send(f"Failed to adjust the timer: {e}")
