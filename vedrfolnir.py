@@ -188,6 +188,17 @@ class dbClient:
                     FOREIGN KEY (game_id) REFERENCES games (game_id)
                 )
                 """)
+
+                await cursor.execute("""
+                CREATE TABLE IF NOT EXISTS chess_timers (
+                    chess_timer_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    game_id INTEGER NOT NULL,
+                    nation TEXT NOT NULL,
+                    time_remaining INTEGER DEFAULT 0,
+                    UNIQUE(game_id, nation),
+                    FOREIGN KEY (game_id) REFERENCES games (game_id)
+                )
+                """)
                 
                 await cursor.execute("PRAGMA table_info(players)")
                 player_columns = [row[1] for row in await cursor.fetchall()]
@@ -195,6 +206,8 @@ class dbClient:
                     await cursor.execute("ALTER TABLE players ADD COLUMN chess_clock_time_remaining INTEGER DEFAULT 0;")
                 if "nation_name" not in player_columns:
                     await cursor.execute("ALTER TABLE players ADD COLUMN nation_name TEXT DEFAULT NULL;")
+                if "chess_timer_id" not in player_columns:
+                    await cursor.execute("ALTER TABLE players ADD COLUMN chess_timer_id INTEGER DEFAULT NULL REFERENCES chess_timers(chess_timer_id);")
                 await self.connection.commit()
         
         try:
@@ -444,7 +457,7 @@ class dbClient:
         Reset the timer for a new turn:
         - Set remaining_time to timer_default.
         - Restart the timer.
-        - Add per-turn chess clock bonus to all players if chess clock is active.
+        - Add per-turn chess clock bonus to all chess_timers if chess clock is active.
         """
         async def _operation():
             async with self.connection.cursor() as cursor:
@@ -455,7 +468,7 @@ class dbClient:
                        WHERE game_id = ?""",
                     (game_id,)
                 )
-                
+
                 await cursor.execute(
                     """SELECT chess_clock_active, chess_clock_per_turn_time
                        FROM games
@@ -463,46 +476,23 @@ class dbClient:
                     (game_id,)
                 )
                 game_info = await cursor.fetchone()
-                
+
                 if game_info and game_info[0] and game_info[1]:
                     per_turn_bonus = game_info[1]
-                    
+
+                    # Update all chess_timers for this game directly
                     await cursor.execute(
-                        """SELECT DISTINCT player_id FROM players 
-                           WHERE game_id = ? AND currently_claimed = 1""",
-                        (game_id,)
+                        """UPDATE chess_timers
+                           SET time_remaining = time_remaining + ?
+                           WHERE game_id = ?""",
+                        (per_turn_bonus, game_id)
                     )
-                    players = await cursor.fetchall()
-                    
-                    for player in players:
-                        player_id = player[0]
-                        
-                        await cursor.execute(
-                            """SELECT nation, chess_clock_time_remaining FROM players 
-                               WHERE game_id = ? AND player_id = ? 
-                               ORDER BY chess_clock_time_remaining DESC 
-                               LIMIT 1""",
-                            (game_id, player_id)
-                        )
-                        max_time_nation = await cursor.fetchone()
-                        
-                        if max_time_nation:
-                            nation_name = max_time_nation[0]
-                            current_time = max_time_nation[1]
-                            new_time = current_time + per_turn_bonus
-                            
-                            await cursor.execute(
-                                """UPDATE players 
-                                   SET chess_clock_time_remaining = ? 
-                                   WHERE game_id = ? AND player_id = ? AND nation = ?""",
-                                (new_time, game_id, player_id, nation_name)
-                            )
-                            
-                            if config and config.get("debug", False):
-                                print(f"[DEBUG] Added {per_turn_bonus}s chess clock bonus to player {player_id} ({nation_name}), new time: {new_time}s")
-                
+
+                    if config and config.get("debug", False):
+                        print(f"[DEBUG] Added {per_turn_bonus}s chess clock bonus to all nations in game {game_id}")
+
                 await self.connection.commit()
-        
+
         await self._execute_with_retry(_operation)
 
 
@@ -707,7 +697,7 @@ class dbClient:
         return await self._execute_with_retry(_operation)
 
     async def add_player(self, game_id, player_id, nation, chess_clock_time=0, nation_name=None):
-        """Insert or update a player in the players table."""
+        """Insert or update a player in the players table. chess_timer_id linking happens at game start."""
         query = '''
         INSERT INTO players (game_id, player_id, nation, extensions, currently_claimed, chess_clock_time_remaining, nation_name)
         VALUES (:game_id, :player_id, :nation, :extensions, :currently_claimed, :chess_clock_time_remaining, :nation_name)
@@ -1074,17 +1064,49 @@ class dbClient:
         return await self._execute_with_retry(_operation)
 
     async def reset_zero_chess_clock_times(self, game_id, new_time):
-        """Reset chess clock times that are at zero to a new value (for restarts)."""
+        """Create chess_timer entries for all claimed nations and link players (called at game start)."""
         async def _operation():
-            query = """
-            UPDATE players
-            SET chess_clock_time_remaining = :new_time
-            WHERE game_id = :game_id AND chess_clock_time_remaining = 0
-            """
             async with self.connection.cursor() as cursor:
-                await cursor.execute(query, {"new_time": new_time, "game_id": game_id})
+                # Get all distinct nations that are currently claimed
+                await cursor.execute(
+                    """SELECT DISTINCT nation FROM players
+                       WHERE game_id = ? AND currently_claimed = 1""",
+                    (game_id,)
+                )
+                nations = await cursor.fetchall()
+
+                updated_count = 0
+                for nation_row in nations:
+                    nation = nation_row[0]
+
+                    # Check if chess_timer already exists for this game+nation
+                    await cursor.execute(
+                        "SELECT chess_timer_id FROM chess_timers WHERE game_id = ? AND nation = ?",
+                        (game_id, nation)
+                    )
+                    existing = await cursor.fetchone()
+
+                    if existing:
+                        chess_timer_id = existing[0]
+                    else:
+                        # Create chess_timer for this game+nation
+                        await cursor.execute(
+                            "INSERT INTO chess_timers (game_id, nation, time_remaining) VALUES (?, ?, ?)",
+                            (game_id, nation, new_time)
+                        )
+                        chess_timer_id = cursor.lastrowid
+
+                    # Link all players claiming this nation to the chess_timer
+                    await cursor.execute(
+                        """UPDATE players
+                           SET chess_timer_id = ?, chess_clock_time_remaining = ?
+                           WHERE game_id = ? AND nation = ? AND currently_claimed = 1""",
+                        (chess_timer_id, new_time, game_id, nation)
+                    )
+                    updated_count += cursor.rowcount
+
                 await self.connection.commit()
-                return cursor.rowcount
+                return updated_count
 
         return await self._execute_with_retry(_operation)
 
@@ -1198,10 +1220,21 @@ class dbClient:
         return await self._execute_with_retry(_operation)
 
     async def get_currently_claimed_players(self, game_id):
-        """Fetch only currently claimed players in a specific game."""
+        """Fetch only currently claimed players in a specific game with chess timer data from JOIN."""
         async def _operation():
             query = '''
-            SELECT * FROM players WHERE game_id = ? AND currently_claimed = 1;
+            SELECT
+                p.game_id,
+                p.player_id,
+                p.nation,
+                p.extensions,
+                p.currently_claimed,
+                p.nation_name,
+                p.chess_timer_id,
+                COALESCE(ct.time_remaining, 0) as chess_clock_time_remaining
+            FROM players p
+            LEFT JOIN chess_timers ct ON p.chess_timer_id = ct.chess_timer_id
+            WHERE p.game_id = ? AND p.currently_claimed = 1;
             '''
             async with self.connection.cursor() as cursor:
                 await cursor.execute(query, (game_id,))
@@ -1210,7 +1243,7 @@ class dbClient:
                     columns = [column[0] for column in cursor.description]
                     return [dict(zip(columns, row)) for row in rows]
                 return []
-        
+
         return await self._execute_with_retry(_operation)
 
     async def set_game_start_attempted(self, game_id: int, attempted: bool):
@@ -1432,44 +1465,52 @@ class dbClient:
         return await self._execute_with_retry(_operation)
 
     async def get_player_chess_clock_time(self, game_id: int, player_id: str) -> int:
-        """Get a player's remaining chess clock time."""
+        """Get a player's remaining chess clock time from the chess_timers table."""
         async def _operation():
             async with self.connection.cursor() as cursor:
+                # Get the chess_timer_id for this player
                 await cursor.execute(
-                    "SELECT chess_clock_time_remaining FROM players WHERE game_id = ? AND player_id = ? LIMIT 1",
-                    (game_id, player_id)
-                )
-                result = await cursor.fetchone()
-                return result[0] if result else 0
-        
-        return await self._execute_with_retry(_operation)
-
-    async def update_player_chess_clock_time(self, game_id: int, player_id: str, time_remaining: int) -> bool:
-        """Update a player's chess clock time remaining. Updates only the record with the highest current time."""
-        async def _operation():
-            async with self.connection.cursor() as cursor:
-                await cursor.execute(
-                    """SELECT nation, chess_clock_time_remaining FROM players 
-                       WHERE game_id = ? AND player_id = ? 
-                       ORDER BY chess_clock_time_remaining DESC 
+                    """SELECT chess_timer_id FROM players
+                       WHERE game_id = ? AND player_id = ? AND chess_timer_id IS NOT NULL
                        LIMIT 1""",
                     (game_id, player_id)
                 )
                 result = await cursor.fetchone()
-                
-                if result:
-                    nation_with_max_time = result[0]
+
+                if result and result[0]:
+                    # Get the time from chess_timers table
                     await cursor.execute(
-                        "UPDATE players SET chess_clock_time_remaining = ? WHERE game_id = ? AND player_id = ? AND nation = ?",
-                        (time_remaining, game_id, player_id, nation_with_max_time)
+                        "SELECT time_remaining FROM chess_timers WHERE chess_timer_id = ?",
+                        (result[0],)
                     )
+                    timer_result = await cursor.fetchone()
+                    return timer_result[0] if timer_result else 0
+                return 0
+
+        return await self._execute_with_retry(_operation)
+
+    async def update_player_chess_clock_time(self, game_id: int, player_id: str, time_remaining: int) -> bool:
+        """Update a player's chess clock time in the chess_timers table."""
+        async def _operation():
+            async with self.connection.cursor() as cursor:
+                # Get the chess_timer_id for this player
+                await cursor.execute(
+                    """SELECT chess_timer_id FROM players
+                       WHERE game_id = ? AND player_id = ? AND chess_timer_id IS NOT NULL
+                       LIMIT 1""",
+                    (game_id, player_id)
+                )
+                result = await cursor.fetchone()
+
+                if result and result[0]:
+                    # Update the chess_timers table
                     await cursor.execute(
-                        "UPDATE players SET chess_clock_time_remaining = 0 WHERE game_id = ? AND player_id = ? AND nation != ?",
-                        (game_id, player_id, nation_with_max_time)
+                        "UPDATE chess_timers SET time_remaining = ? WHERE chess_timer_id = ?",
+                        (time_remaining, result[0])
                     )
                     await self.connection.commit()
                     return cursor.rowcount > 0
                 return False
-        
+
         return await self._execute_with_retry(_operation)
 
