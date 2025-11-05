@@ -2,7 +2,7 @@
 import aiosqlite
 import asyncio
 import random
-from typing import List, Dict
+from typing import List, Dict, Optional
 import sqlite3
 
 
