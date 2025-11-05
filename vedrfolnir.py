@@ -694,17 +694,14 @@ class dbClient:
         
         return await self._execute_with_retry(_operation)
 
-    async def add_player(self, game_id, player_id, nation, chess_clock_time=0, nation_name=None):
-        """Insert or update a player in the players table. chess_timer_id linking happens at game start."""
+    async def add_player(self, game_id, player_id, nation, chess_timer_id=None, nation_name=None):
+        """Insert or update a player in the players table. Links to chess_timer if provided."""
         query = '''
-        INSERT INTO players (game_id, player_id, nation, extensions, currently_claimed, chess_clock_time_remaining, nation_name)
-        VALUES (:game_id, :player_id, :nation, :extensions, :currently_claimed, :chess_clock_time_remaining, :nation_name)
+        INSERT INTO players (game_id, player_id, nation, extensions, currently_claimed, chess_timer_id, nation_name)
+        VALUES (:game_id, :player_id, :nation, :extensions, :currently_claimed, :chess_timer_id, :nation_name)
         ON CONFLICT (game_id, player_id, nation) DO UPDATE SET
             currently_claimed = :currently_claimed,
-            chess_clock_time_remaining = CASE
-                WHEN chess_clock_time_remaining = 0 THEN :chess_clock_time_remaining
-                ELSE chess_clock_time_remaining
-            END,
+            chess_timer_id = COALESCE(:chess_timer_id, chess_timer_id),
             nation_name = COALESCE(:nation_name, nation_name);
         '''
         params = {
@@ -713,7 +710,7 @@ class dbClient:
             "nation": nation,
             "extensions": 0,
             "currently_claimed": True,
-            "chess_clock_time_remaining": chess_clock_time,
+            "chess_timer_id": chess_timer_id,
             "nation_name": nation_name
         }
 
@@ -1197,6 +1194,35 @@ class dbClient:
                     return dict(zip(columns, row))
                 return None
         
+        return await self._execute_with_retry(_operation)
+
+    async def get_chess_timer_id_for_nation(self, game_id: int, nation: str) -> Optional[int]:
+        """
+        Get the chess_timer_id for a specific nation if it exists in the chess_timers table.
+
+        Args:
+            game_id: The game ID
+            nation: The nation name
+
+        Returns:
+            The chess_timer_id, or None if not found
+        """
+        query = '''
+        SELECT chess_timer_id FROM chess_timers
+        WHERE game_id = :game_id AND nation = :nation
+        LIMIT 1;
+        '''
+        params = {
+            "game_id": game_id,
+            "nation": nation
+        }
+
+        async def _operation():
+            async with self.connection.cursor() as cursor:
+                await cursor.execute(query, params)
+                result = await cursor.fetchone()
+                return result[0] if result else None
+
         return await self._execute_with_retry(_operation)
 
 

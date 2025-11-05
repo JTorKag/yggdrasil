@@ -110,13 +110,8 @@ def register_player_commands(bot):
 
             results = []
             errors = []
-            first_time_claiming = not await bot.db_instance.player_has_claimed_nations(game_id, str(interaction.user.id))
-            
-            chess_clock_active = game_info.get("chess_clock_active", False)
-            chess_clock_time = 0
-            if chess_clock_active and first_time_claiming:
-                chess_clock_time = game_info.get("chess_clock_starting_time", 0)
 
+            chess_clock_active = game_info.get("chess_clock_active", False)
             game_started = game_info.get("game_started", False)
             
             # Check for nations to unclaim (only allowed if game hasn't started)
@@ -155,25 +150,27 @@ def register_player_commands(bot):
                     # Get the human-readable nation name from statusdump
                     human_nation_name = await bifrost.get_nation_name_from_statusdump(game_id, nation_name, bot.db_instance, bot.config)
 
+                    # Determine chess_timer_id to link
+                    chess_timer_id = None
+                    if chess_clock_active and game_started:
+                        # Game already started with chess clock - link to existing timer for this nation
+                        chess_timer_id = await bot.db_instance.get_chess_timer_id_for_nation(game_id, nation_name)
+                        if bot.config and bot.config.get("debug", False):
+                            print(f"[DEBUG] Found existing chess_timer_id {chess_timer_id} for nation {nation_name}")
+
                     if previously_owned:
                         await bot.db_instance.reclaim_nation(game_id, str(interaction.user.id), nation_name, human_nation_name)
                         results.append(f"✅ **{interaction.user.display_name}** re-claimed {nation_name}")
                         if bot.config and bot.config.get("debug", False):
                             print(f"Player {interaction.user.name} reclaimed nation {nation_name} in game {game_id}.")
                     else:
-                        await bot.db_instance.add_player(game_id, str(interaction.user.id), nation_name, chess_clock_time, human_nation_name)
+                        await bot.db_instance.add_player(game_id, str(interaction.user.id), nation_name, chess_timer_id, human_nation_name)
                         results.append(f"✅ **{interaction.user.display_name}** claimed {nation_name}")
                         if bot.config and bot.config.get("debug", False):
                             print(f"Added player {interaction.user.name} as {nation_name} in game {game_id}.")
 
-                        chess_clock_time = 0
-                        
                 except Exception as e:
                     errors.append(f"Failed to claim {nation_name}: {e}")
-
-            if first_time_claiming and chess_clock_active:
-                starting_time = game_info.get("chess_clock_starting_time", 0)
-                await bot.db_instance.update_player_chess_clock_time(game_id, str(interaction.user.id), starting_time)
 
             # Check if player should have role removed (no nations remaining)
             final_nations = await bot.db_instance.get_claimed_nations_by_player(game_id, str(interaction.user.id))
@@ -243,13 +240,18 @@ def register_player_commands(bot):
 
     @bot.tree.command(
         name="unclaim",
-        description="[Admin/Owner] Completely removes a nation claim (deletes all records).",
+        description="[Admin/Owner] Remove a player from the game, optionally preserving their play history.",
         guild=discord.Object(id=bot.guild_id)
     )
     @require_game_channel(bot.config)
     @require_game_owner_or_admin(bot.config)
-    async def unclaim_command(interaction: discord.Interaction, nation_name: str):
-        """Allows game owner/admin to completely remove any nation claim."""
+    async def unclaim_command(interaction: discord.Interaction, player: discord.Member, preserve_history: bool = True):
+        """Allows game owner/admin to remove a player from the game.
+
+        Args:
+            player: The Discord member to remove from the game
+            preserve_history: If True (default), keeps records but marks as unclaimed. If False, deletes all records.
+        """
         await interaction.response.defer()
 
         game_id = await bot.db_instance.get_game_id_by_channel(interaction.channel_id)
@@ -262,67 +264,67 @@ def register_player_commands(bot):
             await interaction.followup.send("Game information not found in the database.")
             return
 
+        player_id = str(player.id)
+
         try:
-            claimed_nations = await bot.db_instance.get_claimed_nations(game_id)
-            player_ids = claimed_nations.get(nation_name, [])
-            
-            if not player_ids:
-                await interaction.followup.send(f"Nation '{nation_name}' is not currently claimed by anyone.")
+            # Get all nations claimed by this player
+            player_nations = await bot.db_instance.get_claimed_nations_by_player(game_id, player_id)
+
+            if not player_nations:
+                await interaction.followup.send(f"**{player.display_name}** has no nations claimed in this game.")
                 return
-            
-            target_player_id = player_ids[0]
-            
-            rows_deleted = await bot.db_instance.delete_player_nation(game_id, target_player_id, nation_name)
-            
-            if rows_deleted == 0:
-                await interaction.followup.send(f"No matching record found for nation '{nation_name}' and the target player.")
-                return
-            
-            guild = interaction.guild
-            target_member = None
-            target_user = None
-            
-            if guild:
-                target_member = guild.get_member(int(target_player_id))
-            
-            # If not found as member, try to fetch as user
-            if not target_member:
+
+            # Unclaim or delete based on preserve_history flag
+            unclaimed_nations = []
+            for nation in player_nations:
                 try:
-                    target_user = await interaction.client.fetch_user(int(target_player_id))
-                except:
-                    target_user = None
-            
+                    if preserve_history:
+                        await bot.db_instance.unclaim_nation(game_id, player_id, nation)
+                    else:
+                        await bot.db_instance.delete_player_nation(game_id, player_id, nation)
+                    unclaimed_nations.append(nation)
+                except Exception as e:
+                    print(f"Error unclaiming {nation} for player {player_id}: {e}")
+
+            if not unclaimed_nations:
+                await interaction.followup.send(f"Failed to unclaim any nations for **{player.display_name}**.")
+                return
+
+            # Remove player role if they have no remaining active nations
+            guild = interaction.guild
             role_removed = False
-            if target_member:
+            if guild:
                 game_name = game_info["game_name"]
                 role_name = f"{game_name} player"
                 role = discord.utils.get(guild.roles, name=role_name)
-                
-                if role and role in target_member.roles:
-                    remaining_nations = await bot.db_instance.get_claimed_nations_by_player(game_id, target_player_id)
-                    
+
+                if role and role in player.roles:
+                    remaining_nations = await bot.db_instance.get_claimed_nations_by_player(game_id, player_id)
+
                     if not remaining_nations:
                         try:
-                            await target_member.remove_roles(role)
+                            await player.remove_roles(role)
                             role_removed = True
                         except discord.Forbidden:
                             pass
-            
-            # Resolve display name with fallbacks
-            if target_member:
-                target_display = target_member.display_name
-            elif target_user:
-                target_display = target_user.display_name
+
+            # Build response message
+            nations_text = ", ".join(unclaimed_nations)
+
+            if preserve_history:
+                message = f"✅ **{player.display_name}** has been removed from the game."
+                message += f"\n📋 Unclaimed nations: **{nations_text}**"
+                message += f"\n💾 Play history has been preserved in game records."
             else:
-                target_display = f"Player ID {target_player_id}"
-            message = f"✅ Nation '{nation_name}' has been **completely removed** from **{target_display}**."
-            message += f"\n🗑️ All records (claim, extensions, chess clock time) have been deleted."
-            
+                message = f"✅ **{player.display_name}** has been **completely removed** from the game."
+                message += f"\n🗑️ Deleted nations: **{nations_text}**"
+                message += f"\n🗑️ All records (claim, extensions, chess clock time) have been deleted."
+
             if role_removed:
-                message += f"\n🎭 Role '{role_name}' was also removed (no remaining nations)."
-            
+                message += f"\n🎭 Role '{role_name}' was also removed."
+
             await interaction.followup.send(message)
-            
+
         except Exception as e:
             await interaction.followup.send(f"An error occurred while unclaiming: {e}")
 
@@ -688,27 +690,6 @@ def register_player_commands(bot):
             await interaction.followup.send(f"Error querying turn for game id:{game_id}\n{str(e)}")
 
 
-    @unclaim_command.autocomplete("nation_name")
-    async def unclaim_autocomplete(
-        interaction: discord.Interaction, current: str
-    ) -> List[app_commands.Choice]:
-        """Autocomplete handler for the unclaim command 'nation_name' argument."""
-        try:
-            game_id = await bot.db_instance.get_game_id_by_channel(interaction.channel_id)
-            if not game_id:
-                return []
-
-            claimed_nations = await bot.db_instance.get_claimed_nations(game_id)
-            
-            all_claimed_nations = list(claimed_nations.keys())
-
-            filtered_nations = [nation for nation in all_claimed_nations if current.lower() in nation.lower()]
-
-            return [app_commands.Choice(name=nation, value=nation) for nation in filtered_nations[:25]]
-
-        except Exception as e:
-            print(f"Error in unclaim autocomplete: {e}")
-            return []
 
     @bot.tree.command(
         name="remove",
