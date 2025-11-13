@@ -1094,9 +1094,9 @@ class dbClient:
                     # Link all players claiming this nation to the chess_timer
                     await cursor.execute(
                         """UPDATE players
-                           SET chess_timer_id = ?, chess_clock_time_remaining = ?
+                           SET chess_timer_id = ?
                            WHERE game_id = ? AND nation = ? AND currently_claimed = 1""",
-                        (chess_timer_id, new_time, game_id, nation)
+                        (chess_timer_id, game_id, nation)
                     )
                     updated_count += cursor.rowcount
 
