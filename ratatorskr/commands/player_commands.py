@@ -572,17 +572,24 @@ def register_player_commands(bot):
             await interaction.followup.send("Game information not found in the database.")
             return
 
-        if not game_info["game_running"] or not game_info["game_started"]:
-            await interaction.followup.send("This game is either not currently running or has not started. Turn information is unavailable.")
+        if not game_info["game_started"]:
+            await interaction.followup.send("This game has not started yet. Turn information is unavailable.")
             return
 
         try:
-            raw_status = await bot.nidhogg.query_game_status(game_id, bot.db_instance)
-            timer_table = await bot.db_instance.get_game_timer(game_id)
+            # Parse statusdump file using bifrost
+            from bifrost import bifrost
+            statusdump_data = await bifrost.parse_statusdump_for_turn_status(game_id, bot.db_instance, bot.config)
 
-            lines = raw_status.split("\n")
-            game_name = lines[2].split(":")[1].strip()
-            turn = lines[4].split(":")[1].strip()
+            if not statusdump_data:
+                await interaction.followup.send("Statusdump file not found or could not be parsed. The game may not have generated status information yet.")
+                return
+
+            turn = statusdump_data["turn"]
+            nations_data = statusdump_data["nations"]
+
+            # Get timer information
+            timer_table = await bot.db_instance.get_game_timer(game_id)
             time_left = timer_table["remaining_time"]
             timer_running = timer_table["timer_running"]
 
@@ -613,20 +620,36 @@ def register_player_commands(bot):
 
                 return ", ".join(parts) if parts else "0 seconds"
 
+            # Categorize nations based on statusdump data
+            # Filter out nations eliminated in prior turns (player_status == -1)
             played_nations = []
             played_but_not_finished = []
             undone_nations = []
 
-            for line in lines[6:]:
-                if "played, but not finished" in line:
-                    nation = line.split(":")[1].split(",")[0].strip()
-                    played_but_not_finished.append(nation)
-                elif "played" in line:
-                    nation = line.split(":")[1].split(",")[0].strip()
-                    played_nations.append(nation)
-                elif "(-)" in line:
-                    nation = line.split(":")[1].split(",")[0].strip()
-                    undone_nations.append(nation)
+            for nation in nations_data:
+                # Skip nations eliminated in prior turns
+                if nation["player_status"] == -1:
+                    continue
+
+                nation_name = nation["nation_name"]
+                player_status = nation["player_status"]
+                turn_status = nation["turn_status"]
+
+                # AI-controlled nations (player_status == 2) are always treated as done
+                if player_status == 2:
+                    played_nations.append(f"{nation_name} - AI")
+                    continue
+
+                # For human players (player_status == 1) and eliminated this turn (player_status == -2)
+                if turn_status == 2:
+                    # Turn submitted
+                    played_nations.append(nation_name)
+                elif turn_status == 1:
+                    # Turn played but not finished
+                    played_but_not_finished.append(nation_name)
+                elif turn_status == 0:
+                    # No activity (undone)
+                    undone_nations.append(nation_name)
 
             embeds = []
 

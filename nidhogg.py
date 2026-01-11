@@ -111,7 +111,8 @@ class nidhogg:
                 "--noclientstart",
                 "--preexec", preexec_command,
                 "--postexec", postexec_command,
-                "--textonly"
+                "--textonly",
+                "--statusdump"
             ]
 
             throne_counts = thrones.split(",")
@@ -210,14 +211,6 @@ class nidhogg:
             # If diplo is "Binding" or None, use default behavior (no flag needed)
 
             command.append("--statfile")
-            
-            if not game_details.get("game_started", False):
-                command.append("--statusdump")
-                if config and config.get("debug", False):
-                    print(f"[DEBUG] Added --statusdump flag for non-started game {game_id}")
-            else:
-                if config and config.get("debug", False):
-                    print(f"[DEBUG] Skipped --statusdump flag for already-started game {game_id}")
 
             if not isinstance(game_id, int) or game_id <= 0:
                 raise ValueError(f"Invalid game_id: {game_id}")

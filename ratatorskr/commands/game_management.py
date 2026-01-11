@@ -222,7 +222,7 @@ def register_game_management_commands(bot):
             event_rarity_map = {"Common": 1, "Rare": 2}
             disicples_map = {"False": 0, "True": 1}
             story_events_map = {"None": 0, "Some": 1, "Full": 2}
-            no_going_ai_map = {"True": 0, "False": 1}
+            no_going_ai_map = {"True": 1, "False": 0}
             player_control_timers_map = {"True": 1, "False": 0}
 
             game_era_value = era_map[game_era]
@@ -502,7 +502,7 @@ def register_game_management_commands(bot):
                 return
             story_events_value = story_events_map[story_events]
 
-            no_going_ai_map = {"True": 0, "False": 1}
+            no_going_ai_map = {"True": 1, "False": 0}
             if no_going_ai not in no_going_ai_map:
                 await interaction.followup.send("Invalid value for no_going_ai. Allowed values: True, False.", ephemeral=True)
                 return
@@ -1005,7 +1005,7 @@ def register_game_management_commands(bot):
         print("[GAME_MGMT] Registering start-game command...")
     @bot.tree.command(
         name="start-game",
-        description="Forces a game to generate a new turn at any time.",
+        description="Starts the game after the lobby has been launched and pretenders have been submitted.",
         guild=discord.Object(id=bot.guild_id)
     )
     @require_game_channel(bot.config)

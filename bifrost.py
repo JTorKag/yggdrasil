@@ -478,6 +478,87 @@ class bifrost:
             return None
 
     @staticmethod
+    async def parse_statusdump_for_turn_status(game_id: int, db_instance, config: dict):
+        """
+        Parses the statusdump file for a given game ID and extracts turn and nation status information.
+        Used by the undone command to display which nations have submitted turns.
+
+        Args:
+            game_id (int): The ID of the game.
+            db_instance: Database client instance to fetch game information.
+            config (dict): Configuration containing dom_data_folder.
+
+        Returns:
+            dict: A dictionary containing:
+                - turn: The current turn number
+                - nations: List of dicts with nation_name, player_status, and turn_status
+                  player_status: 1=human, 2=AI, -2=eliminated this turn, -1=eliminated prior turn
+                  turn_status: 0=undone, 1=played but not finished, 2=submitted
+        """
+        try:
+            game_info = await db_instance.get_game_info(game_id)
+            if not game_info:
+                return None
+
+            game_name = game_info.get("game_name")
+            savedgames_folder = os.path.join(config.get("dom_data_folder"), "savedgames", game_name)
+            statusdump_file_path = os.path.join(savedgames_folder, "statusdump.txt")
+
+            if not os.path.exists(statusdump_file_path):
+                return None
+
+            with open(statusdump_file_path, "r", encoding="utf-8", errors="ignore") as status_file:
+                lines = status_file.readlines()
+
+            if len(lines) < 2:
+                return None
+
+            # Parse turn number from line 2 (turn X, era Y, mods Z, turnlimit W)
+            turn_number = -1
+            turn_line = lines[1].strip()
+            if turn_line.startswith("turn "):
+                parts = turn_line.split(",")
+                if parts:
+                    turn_part = parts[0].strip()
+                    turn_str = turn_part.replace("turn ", "").strip()
+                    turn_number = int(turn_str)
+
+            # Parse nation status from lines starting with "Nation"
+            nations = []
+            for line in lines[2:]:
+                line = line.strip()
+                if not line.startswith("Nation"):
+                    continue
+
+                # Split by tab to parse fields
+                # Format: Nation\t<id>\t<id>\t<player_status>\t<unknown>\t<turn_status>\t<tag>\t<name>\t<pretender>
+                fields = line.split("\t")
+                if len(fields) < 9:
+                    continue
+
+                try:
+                    player_status = int(fields[3])
+                    turn_status = int(fields[5])
+                    nation_name = fields[7]
+
+                    nations.append({
+                        "nation_name": nation_name,
+                        "player_status": player_status,
+                        "turn_status": turn_status
+                    })
+                except (ValueError, IndexError):
+                    continue
+
+            return {
+                "turn": turn_number,
+                "nations": nations
+            }
+
+        except Exception as e:
+            print(f"Error parsing statusdump for undone command for game ID {game_id}: {e}")
+            return None
+
+    @staticmethod
     async def get_nation_name_from_statusdump(game_id: int, nation_file: str, db_instance, config: dict):
         """
         Reads the statusdump file for a given game ID and extracts the nation name
