@@ -100,7 +100,11 @@ async def create_dropdown(
                         discord.SelectOption(
                             label=option["name"],
                             value=option["location"],
-                            description=option.get("yggdescr", "")[:100] if option.get("yggdescr") else None,
+                            description=(
+                                (f"Version {option['version']} - {option.get('yggdescr', '')}" if option.get("yggdescr") else f"Version {option['version']}")[:100]
+                                if option.get("version")
+                                else (option.get("yggdescr", "")[:100] if option.get("yggdescr") else None)
+                            ),
                             emoji=resolve_emoji(option.get("yggemoji")),
                             default=(
                                 option["location"].split('/', 1)[-1] in preselected_set

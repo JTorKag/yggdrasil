@@ -414,10 +414,25 @@ def register_player_commands(bot):
         try:
             print(f"Fetching pretenders for game ID: {game_id}")
 
+            # Get game info to check if game has started
+            game_info = await bot.db_instance.get_game_info(game_id)
+            game_started = game_info.get("game_started", False) if game_info else False
+
             # Get nations with friendly names
             nations_with_names = await bifrost.get_valid_nations_with_friendly_names(game_id, bot.config, bot.db_instance)
 
-            claimed_nations = await bot.db_instance.get_claimed_nations(game_id)
+            # Get dead nations if game has started
+            dead_nations = set()
+            if game_started:
+                statusdump_data = await bifrost.parse_statusdump_for_turn_status(game_id, bot.db_instance, bot.config)
+                if statusdump_data:
+                    for nation in statusdump_data["nations"]:
+                        # Mark nations with player_status == -1 as dead
+                        if nation["player_status"] == -1:
+                            dead_nations.add(nation["nation_name"])
+
+            # Get all claimants (current and previous)
+            all_claimants = await bot.db_instance.get_all_claimants_for_nations(game_id)
 
             # Build description instead of fields to avoid 25-field limit
             description_lines = []
@@ -429,15 +444,34 @@ def register_player_commands(bot):
                 nation_name = nation_info['nation_name']
                 display_text = f"{nation_name} ({nation_file})" if nation_name != nation_file else nation_file
 
-                claimants = claimed_nations.get(nation_file, [])
-                if claimants:
+                nation_claimants = all_claimants.get(nation_file, {'current': [], 'previous': []})
+                current_claimants = nation_claimants['current']
+                previous_claimants = nation_claimants['previous']
+
+                # Determine if we should show previous claimants
+                # Show previous claimants only if: game started AND nation is dead
+                show_previous = game_started and nation_name in dead_nations
+
+                if current_claimants or (show_previous and previous_claimants):
                     resolved_claimants = []
-                    for player_id in claimants:
+
+                    # Add current claimants
+                    for player_id in current_claimants:
                         user = interaction.guild.get_member(int(player_id)) or await interaction.client.fetch_user(int(player_id))
                         if user:
                             resolved_claimants.append(user.display_name)
                         else:
                             resolved_claimants.append(f"Unknown ({player_id})")
+
+                    # Add previous claimants if applicable
+                    if show_previous and previous_claimants:
+                        for player_id in previous_claimants:
+                            user = interaction.guild.get_member(int(player_id)) or await interaction.client.fetch_user(int(player_id))
+                            if user:
+                                resolved_claimants.append(f"~~{user.display_name}~~")
+                            else:
+                                resolved_claimants.append(f"~~Unknown ({player_id})~~")
+
                     description_lines.append(f"**{display_text}**: {', '.join(resolved_claimants)}")
                     claimed_count += 1
                 else:

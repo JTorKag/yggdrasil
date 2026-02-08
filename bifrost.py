@@ -148,17 +148,18 @@ class bifrost:
     @staticmethod
     def parse_ygg_metadata(file_path):
         """
-        Parse a file to extract #yggemoji, #yggdescr, and #description metadata.
+        Parse a file to extract #yggemoji, #version, #yggdescr, and #description metadata.
 
         Args:
             file_path (str): The path to the file to parse.
 
         Returns:
-            dict: A dictionary containing 'yggemoji' and 'yggdescr' values, if found.
+            dict: A dictionary containing 'yggemoji', 'version', and 'yggdescr' values, if found.
                   Priority: #yggdescr > #description
         """
         metadata = {
             "yggemoji": "::",
+            "version": "",
             "yggdescr": ""
         }
 
@@ -171,6 +172,9 @@ class bifrost:
                     if line.startswith("#yggemoji"):
                         emoji = line[len("#yggemoji"):].strip().strip('"').strip("'")
                         metadata["yggemoji"] = f":{emoji}:" if emoji else "::"
+                    elif line.startswith("#version"):
+                        version = line[len("#version"):].strip().strip('"').strip("'")
+                        metadata["version"] = version
                     elif line.startswith("#yggdescr"):
                         description = line[len("#yggdescr"):].strip().strip('"').strip("'")
                         metadata["yggdescr"] = description
@@ -750,12 +754,13 @@ class bifrost:
                         if os.path.isfile(dm_file_path):
                             metadata = bifrost.parse_ygg_metadata(dm_file_path)
                         else:
-                            metadata = {"yggemoji": "::", "yggdescr": ""}
+                            metadata = {"yggemoji": "::", "version": "", "yggdescr": ""}
 
                         mod_json = {
                             "name": entry.name,
                             "location": f"{entry.name}/{entry.name}.dm",
                             "yggemoji": metadata.get("yggemoji", "::"),
+                            "version": metadata.get("version", ""),
                             "yggdescr": metadata.get("yggdescr", ""),
                         }
                         mods.append(mod_json)
@@ -1033,6 +1038,52 @@ class bifrost:
 
             await bifrost.safe_extract_zip(str(zip_file_path), str(extract_folder))
 
+            # Validate the extracted map contents
+            folder_name = extract_folder.name
+            try:
+                top_level_files = [f for f in extract_folder.iterdir() if f.is_file()]
+            except Exception as e:
+                # Clean up on error
+                if extract_folder.exists():
+                    shutil.rmtree(extract_folder)
+                if zip_file_path.exists():
+                    os.remove(zip_file_path)
+                return {"success": False, "error": f"Error reading map folder contents: {e}"}
+
+            # Check for .map files and .dm files
+            map_files = [f for f in top_level_files if f.suffix.lower() == '.map']
+            dm_files = [f for f in top_level_files if f.suffix.lower() == '.dm']
+
+            # If .dm files found but no .map files, this is likely a mod not a map
+            if dm_files and not map_files:
+                # Clean up
+                if extract_folder.exists():
+                    shutil.rmtree(extract_folder)
+                if zip_file_path.exists():
+                    os.remove(zip_file_path)
+                return {"success": False, "error": "This appears to be a mod, you tried to upload it as a map."}
+
+            # If no .map files found, likely zipped the folder instead of contents
+            if not map_files:
+                # Clean up
+                if extract_folder.exists():
+                    shutil.rmtree(extract_folder)
+                if zip_file_path.exists():
+                    os.remove(zip_file_path)
+                return {"success": False, "error": "No .map file found. You may have zipped the folder instead of the files."}
+
+            # Check if at least one .map file matches the folder name
+            expected_map_name = f"{folder_name}.map"
+            matching_map = any(f.name.lower() == expected_map_name.lower() for f in map_files)
+
+            if not matching_map:
+                # Clean up
+                if extract_folder.exists():
+                    shutil.rmtree(extract_folder)
+                if zip_file_path.exists():
+                    os.remove(zip_file_path)
+                return {"success": False, "error": "No .map file found that matches the zip folder name. These must match."}
+
             return {"success": True, "extracted_path": str(extract_folder)}
 
         except zipfile.BadZipFile:
@@ -1086,6 +1137,52 @@ class bifrost:
                 return {"success": False, "error": f"A folder named '{zip_file_path.stem}' already exists in the mods folder."}
 
             await bifrost.safe_extract_zip(str(zip_file_path), str(extract_folder))
+
+            # Validate the extracted mod contents
+            folder_name = extract_folder.name
+            try:
+                top_level_files = [f for f in extract_folder.iterdir() if f.is_file()]
+            except Exception as e:
+                # Clean up on error
+                if extract_folder.exists():
+                    shutil.rmtree(extract_folder)
+                if zip_file_path.exists():
+                    os.remove(zip_file_path)
+                return {"success": False, "error": f"Error reading mod folder contents: {e}"}
+
+            # Check for .dm files and .map files
+            dm_files = [f for f in top_level_files if f.suffix.lower() == '.dm']
+            map_files = [f for f in top_level_files if f.suffix.lower() == '.map']
+
+            # If .map files found but no .dm files, this is likely a map not a mod
+            if map_files and not dm_files:
+                # Clean up
+                if extract_folder.exists():
+                    shutil.rmtree(extract_folder)
+                if zip_file_path.exists():
+                    os.remove(zip_file_path)
+                return {"success": False, "error": "This appears to be a map, you tried to upload it as a mod."}
+
+            # If no .dm files found, likely zipped the folder instead of contents
+            if not dm_files:
+                # Clean up
+                if extract_folder.exists():
+                    shutil.rmtree(extract_folder)
+                if zip_file_path.exists():
+                    os.remove(zip_file_path)
+                return {"success": False, "error": "No .dm file found. You may have zipped the folder instead of the files."}
+
+            # Check if at least one .dm file matches the folder name
+            expected_dm_name = f"{folder_name}.dm"
+            matching_dm = any(f.name.lower() == expected_dm_name.lower() for f in dm_files)
+
+            if not matching_dm:
+                # Clean up
+                if extract_folder.exists():
+                    shutil.rmtree(extract_folder)
+                if zip_file_path.exists():
+                    os.remove(zip_file_path)
+                return {"success": False, "error": "No .dm file found that matches the zip folder name. These must match."}
 
             return {"success": True, "extracted_path": str(extract_folder)}
 

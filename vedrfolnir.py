@@ -827,7 +827,43 @@ class dbClient:
             print(f"Error fetching claimed nations for game {game_id}: {e}")
             return {}
 
+    async def get_all_claimants_for_nations(self, game_id: int) -> Dict[str, Dict[str, List[str]]]:
+        """
+        Fetches all claimants (both current and previous) for each nation in a specific game.
 
+        Args:
+            game_id (int): The ID of the game.
+
+        Returns:
+            Dict[str, Dict[str, List[str]]]: A dictionary mapping each nation to a dict with:
+                - 'current': List of currently claimed player IDs
+                - 'previous': List of previously claimed player IDs
+        """
+        query = '''
+        SELECT nation, player_id, currently_claimed
+        FROM players
+        WHERE game_id = :game_id
+        '''
+        params = {"game_id": game_id}
+        try:
+            async with self.connection.cursor() as cursor:
+                await cursor.execute(query, params)
+                rows = await cursor.fetchall()
+
+            nations_claimants = {}
+            for nation, player_id, currently_claimed in rows:
+                if nation not in nations_claimants:
+                    nations_claimants[nation] = {'current': [], 'previous': []}
+
+                if currently_claimed == 1:
+                    nations_claimants[nation]['current'].append(player_id)
+                else:
+                    nations_claimants[nation]['previous'].append(player_id)
+
+            return nations_claimants
+        except Exception as e:
+            print(f"Error fetching all claimants for game {game_id}: {e}")
+            return {}
 
 
 

@@ -1,10 +1,11 @@
 """Timer management system for game monitoring and turn progression."""
 
-import time 
+import time
 import asyncio
 import discord
 import sqlite3
 import aiosqlite
+from bifrost import bifrost
 
 class TimerManager:
     def __init__(self, db_instance, nidhogg, config, discord_bot):
@@ -162,12 +163,16 @@ class TimerManager:
 
             # Try to get undone information
             try:
-                raw_status = await self.nidhogg.query_game_status(game_id, self.db_instance)
-                timer_table = await self.db_instance.get_game_timer(game_id)
-                lines = raw_status.split("\n")
+                # Parse statusdump file using bifrost (same as /undone command)
+                statusdump_data = await bifrost.parse_statusdump_for_turn_status(game_id, self.db_instance, self.config)
 
-                # Get turn number from status
-                turn = lines[4].split(":")[1].strip() if len(lines) > 4 else "?"
+                if not statusdump_data:
+                    raise ValueError("Statusdump data not available")
+
+                turn = statusdump_data["turn"]
+                nations_data = statusdump_data["nations"]
+
+                timer_table = await self.db_instance.get_game_timer(game_id)
                 time_left = timer_table["remaining_time"] if timer_table else 3600
                 timer_running = timer_table["timer_running"] if timer_table else True
 
@@ -207,20 +212,36 @@ class TimerManager:
                 )
                 embeds.append(game_info_embed)
 
+                # Categorize nations based on statusdump data
+                # Filter out nations eliminated in prior turns (player_status == -1)
                 played_nations = []
                 played_but_not_finished = []
                 undone_nations = []
 
-                for line in lines[6:] if len(lines) > 6 else []:
-                    if "played, but not finished" in line:
-                        nation = line.split(":")[1].split(",")[0].strip()
-                        played_but_not_finished.append(nation)
-                    elif "played" in line:
-                        nation = line.split(":")[1].split(",")[0].strip()
-                        played_nations.append(nation)
-                    elif "(-)" in line:
-                        nation = line.split(":")[1].split(",")[0].strip()
-                        undone_nations.append(nation)
+                for nation in nations_data:
+                    # Skip nations eliminated in prior turns
+                    if nation["player_status"] == -1:
+                        continue
+
+                    nation_name = nation["nation_name"]
+                    player_status = nation["player_status"]
+                    turn_status = nation["turn_status"]
+
+                    # AI-controlled nations (player_status == 2) are always treated as done
+                    if player_status == 2:
+                        played_nations.append(f"{nation_name} - AI")
+                        continue
+
+                    # For human players (player_status == 1) and eliminated this turn (player_status == -2)
+                    if turn_status == 2:
+                        # Turn submitted
+                        played_nations.append(nation_name)
+                    elif turn_status == 1:
+                        # Turn played but not finished
+                        played_but_not_finished.append(nation_name)
+                    elif turn_status == 0:
+                        # No activity (undone)
+                        undone_nations.append(nation_name)
 
                 # Add the same embeds as /undone command
                 if played_nations:
@@ -319,8 +340,6 @@ class TimerManager:
             - Updates internal game_turns tracking dictionary
         """
         try:
-            from bifrost import bifrost
-            
             if self.config and self.config.get("debug", False):
                 print(f"[DEBUG] Checking turn transition for game ID {game_id}")
             
