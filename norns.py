@@ -43,6 +43,8 @@ class TimerManager:
         - Error recovery with exponential backoff
         """
         while self.running:
+            loop_start = time.time()
+
             try:
                 games_needing_monitoring = await self.db_instance.get_games_needing_turn_monitoring()
                 for game in games_needing_monitoring:
@@ -97,7 +99,7 @@ class TimerManager:
                     print("[INFO] Attempting to recover database connection...")
                     self.last_error_time = current_time
                 self.error_count += 1
-                
+
                 if self.error_count > 5:
                     sleep_time = min(30, 2 ** min(self.error_count - 5, 4))
                     print(f"[WARNING] Multiple database errors, sleeping for {sleep_time}s")
@@ -105,7 +107,7 @@ class TimerManager:
                 else:
                     await asyncio.sleep(5)
                 continue
-                
+
             except Exception as e:
                 current_time = time.time()
                 if current_time - self.last_error_time > 60:
@@ -114,12 +116,15 @@ class TimerManager:
                 self.error_count += 1
                 await asyncio.sleep(5)
                 continue
-            
+
             if self.error_count > 0:
                 self.error_count = 0
                 print("[INFO] TimerManager recovered from errors")
 
-            await asyncio.sleep(1)
+            # Sleep for remainder of 1 second interval to eliminate timing drift
+            elapsed = time.time() - loop_start
+            sleep_time = max(0, 1.0 - elapsed)
+            await asyncio.sleep(sleep_time)
 
     async def send_timer_warning(self, game_id: int, game_info: dict):
         """
