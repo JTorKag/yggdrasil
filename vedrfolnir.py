@@ -428,6 +428,31 @@ class dbClient:
         
         return await self._execute_with_retry(_operation)
 
+    async def decrement_timer(self, game_id):
+        """
+        Atomically decrement remaining_time by 1 (minimum 0) and return the new value.
+
+        Uses a single SQL statement to avoid race conditions where a concurrent
+        reset_timer_for_new_turn could be overwritten by a stale read-then-write.
+        """
+        async def _operation():
+            async with self.connection.cursor() as cursor:
+                await cursor.execute(
+                    """UPDATE gameTimers
+                       SET remaining_time = MAX(0, remaining_time - 1)
+                       WHERE game_id = ? AND timer_running = true""",
+                    (game_id,)
+                )
+                await self.connection.commit()
+                await cursor.execute(
+                    "SELECT remaining_time FROM gameTimers WHERE game_id = ?",
+                    (game_id,)
+                )
+                row = await cursor.fetchone()
+                return row[0] if row else None
+
+        return await self._execute_with_retry(_operation)
+
     async def update_timer(self, game_id, remaining_time, timer_running):
         """
         Update the remaining time and running status of a timer.

@@ -63,7 +63,6 @@ class TimerManager:
 
                 for timer in active_timers:
                     game_id = timer["game_id"]
-                    remaining_time = timer["remaining_time"]
 
                     game_info = await self.db_instance.get_game_info(game_id)
                     if not game_info or not game_info.get("game_running", False):
@@ -71,7 +70,11 @@ class TimerManager:
 
                     # Screen session already checked above, skip duplicate check
 
-                    new_remaining_time = max(0, remaining_time - 1)
+                    # Atomically decrement and read back the current value to avoid
+                    # race conditions with postexec resetting the timer concurrently.
+                    new_remaining_time = await self.db_instance.decrement_timer(game_id)
+                    if new_remaining_time is None:
+                        continue
 
                     if new_remaining_time == 3600:
                         if self.config and self.config.get("debug", False):
@@ -89,8 +92,6 @@ class TimerManager:
                                 print(f"[DEBUG] Timer for game ID {game_id} reset for the next turn.")
                         except Exception as e:
                             print(f"[ERROR] Failed to force host for game ID {game_id}: {e}")
-                    else:
-                        await self.db_instance.update_timer(game_id, new_remaining_time, True)
 
             except (aiosqlite.OperationalError, sqlite3.OperationalError) as e:
                 current_time = time.time()
@@ -123,6 +124,8 @@ class TimerManager:
 
             # Sleep for remainder of 1 second interval to eliminate timing drift
             elapsed = time.time() - loop_start
+            if elapsed > 1.0:
+                print(f"[WARNING] Timer loop processing took {elapsed:.2f}s (>1.0s threshold)")
             sleep_time = max(0, 1.0 - elapsed)
             await asyncio.sleep(sleep_time)
 
